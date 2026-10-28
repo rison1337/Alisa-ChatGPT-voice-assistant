@@ -7,7 +7,7 @@ from .runtime import NATIVE,TOOLS,status,stop,start,apply_settings
 from . import ui
 
 def native_paths():
-    manifest=json.loads((ROOT/'assets/native/manifest.json').read_text())
+    manifest=json.loads((ROOT/'assets/native/manifest.json').read_text(encoding='utf-8'))
     paths=[]
     for name in manifest['files']:
         if Path(name).is_absolute() or '..' in Path(name).parts:raise RuntimeError('Некорректный manifest')
@@ -15,7 +15,7 @@ def native_paths():
     return paths+[NATIVE+'/'+name for name in ['launch.bridge.json','quasar.speech.json','tts-asound.conf']]+[TOOLS+'/'+name for name in ['vpn.sh','boot.sh','native-call.sh']]
 
 def native_files(station):
-    folder=ROOT/'assets/native';manifest=json.loads((folder/'manifest.json').read_text())
+    folder=ROOT/'assets/native';manifest=json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
     files={}
     for name,digest in manifest['files'].items():
         if Path(name).is_absolute() or '..' in Path(name).parts:raise RuntimeError('Некорректный manifest')

@@ -11,6 +11,9 @@ def inspect(config):
     root=lines[0].strip()=='0';compatible=any('station-lite2' in line or 'plum' in line or 'yandex,prune' in line for line in lines)
     abi=any(MAIND in line for line in lines) and any(VQE in line for line in lines)
     missing=[tool for tool in ['ssh','chromium'] if not shutil.which(tool)]
+    if sys.platform=='win32':
+        from .windows import missing as windows_missing
+        missing=windows_missing()
     if config['mode']=='bridge':
         for tool in ['pactl','pacat','paplay','Xvfb','xauth']:
             if not shutil.which(tool) and not (tool=='Xvfb' and (__import__('pathlib').Path(__file__).resolve().parents[1]/'engines/bridge/display-tools/usr/bin/Xvfb').exists()):missing.append(tool)

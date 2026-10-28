@@ -37,11 +37,11 @@ class Preview:
                     if not self.error:
                         station=Station(self.config)
                         station.run('test -d /sys/class/leds/plum:red:ring1',timeout=12)
-                        script=(ROOT/'assets/native/indicator.sh').read_text()
+                        script=(ROOT/'assets/native/indicator.sh').read_text(encoding='utf-8')
                         # The demo restores the actual pre-demo frame, while the
                         # runtime normally restores idle darkness after a call.
                         script=script.replace("saved=' 0 0 0 0 0 0 0 0 0'",'saved="$task_led_current"')
-                        self.process=subprocess.Popen(station.args()+['sh -c '+shlex.quote(script)],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                        self.process=station.open_input('sh -c '+shlex.quote(script))
                         self.thread=threading.Thread(target=self.animate,daemon=True);self.thread.start()
                 except (RuntimeError,OSError,subprocess.SubprocessError):self.error='Демо недоступно: проверьте SSH. Выбор цвета доступен.'
             if self.process is not None and self.process.poll() is not None:self.error='Демо завершилось: проверьте SSH. Выбор цвета доступен.'

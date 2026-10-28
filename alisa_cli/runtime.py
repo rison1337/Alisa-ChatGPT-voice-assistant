@@ -31,7 +31,7 @@ def status(config):
     if result.get('process_alive') is False and result.get('phase') in ('starting','running','stopping'):
         result['phase']='stopped'
     try:
-        voice=json.loads((HOME/'bridge/runtime/voice.json').read_text())
+        voice=json.loads((HOME/'bridge/runtime/voice.json').read_text(encoding='utf-8'))
         result['voice_active']=bool(result.get('native_alice_paused'))
         pid=int(voice.get('pid',0))
         owned=pid>0 and str(ROOT/'engines/bridge/voice.py').encode() in __import__('pathlib').Path(f'/proc/{pid}/cmdline').read_bytes()

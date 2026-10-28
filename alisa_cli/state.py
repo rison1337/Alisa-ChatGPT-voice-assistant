@@ -2,7 +2,7 @@ from __future__ import annotations
 import json,os,re,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-HOME=Path(os.environ.get('ALISA_HOME',Path.home()/'.local/state/alisa-voice'))
+HOME=Path(os.environ.get('ALISA_HOME',Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData/Local'))/'AlisaVoice/state' if os.name=='nt' else Path.home()/'.local/state/alisa-voice'))
 MODES=('native','bridge')
 STYLES=('rainbow','red','blue','green','purple','white','pulse-red','pulse-blue','pulse-green','pulse-purple','pulse-white','off')
 STYLE_NAMES={'rainbow':'Радуга','red':'Красный','blue':'Синий','green':'Зелёный','purple':'Фиолетовый','white':'Белый','off':'Выключена'}
@@ -11,10 +11,13 @@ DEFAULT_PHRASES={'open':'открой чат','close':'закрой чат','new
 
 def write_private(path,value):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+    if os.name=='nt':
+        from .windows import private_directory
+        private_directory(path.parent)
     data=(json.dumps(value,ensure_ascii=False,indent=2)+'\n').encode() if not isinstance(value,bytes) else value
     fd,name=tempfile.mkstemp(prefix='.'+path.name,dir=path.parent)
     try:
-        os.fchmod(fd,0o600)
+        if hasattr(os,'fchmod'):os.fchmod(fd,0o600)
         with os.fdopen(fd,'wb') as f:f.write(data);f.flush();os.fsync(f.fileno())
         os.replace(name,path)
     finally:
@@ -29,7 +32,7 @@ def defaults(mode):
 def load(mode):
     p=HOME/mode/'config.json'
     if not p.exists():return defaults(mode)
-    value=json.loads(p.read_text());validate(value);return value
+    value=json.loads(p.read_text(encoding='utf-8'));validate(value);return value
 
 def save(value):
     validate(value);write_private(HOME/value['mode']/'config.json',value)

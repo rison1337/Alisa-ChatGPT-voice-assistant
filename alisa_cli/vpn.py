@@ -28,8 +28,10 @@ def configure(config,source,index=None,client='standard',selection=None):
     if engine=='xray':
         spec=__import__('importlib.util',fromlist=['spec_from_file_location'])
         definition=spec.spec_from_file_location('fetch_xray',ROOT/'scripts/fetch_xray.py');module=spec.module_from_spec(definition);definition.loader.exec_module(module)
-        module.fetch('linux-amd64');module.fetch('linux-armv7')
-    core=ROOT/'assets/vpn/linux-amd64'/engine
+        if sys.platform!='win32':module.fetch('linux-amd64')
+        module.fetch('linux-armv7')
+    core=ROOT/'assets/vpn'/('windows-amd64' if sys.platform=='win32' else 'linux-amd64')/(engine+'.exe' if sys.platform=='win32' else engine)
+    if sys.platform=='win32' and not core.exists():raise RuntimeError('Windows-пакет VPN неполный. Повторите установку CLI.')
     if core.exists():
         with tempfile.TemporaryDirectory(prefix='alisa-vless-') as folder:
             candidate=__import__('pathlib').Path(folder)/'config.json';write_private(candidate,value)

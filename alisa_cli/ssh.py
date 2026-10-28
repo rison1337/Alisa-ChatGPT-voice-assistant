@@ -1,4 +1,4 @@
-import hashlib,shlex,subprocess
+import hashlib,shlex,subprocess,sys
 from pathlib import Path
 from .state import HOME,write_private,validate
 
@@ -15,6 +15,10 @@ class Station:
         if c.get('user'):a+=['-l',c['user']]
         return a+[c['host']]
     def run(self,command,data=None,check=True,timeout=60):
+        if sys.platform=='win32':
+            validate(self.config)
+            from .winssh import run
+            return run(self.config,command,data,check,timeout)
         result=subprocess.run(self.args()+[command],input=data,capture_output=True,timeout=timeout)
         if check and result.returncode:
             # Never surface arbitrary remote stdout (which may contain credentials).
@@ -24,6 +28,17 @@ class Station:
             raise RuntimeError(f'Команда на колонке завершилась с кодом {result.returncode}')
         return result
     def text(self,command,**kwargs):return self.run(command,**kwargs).stdout.decode()
+    def open_input(self,command):
+        if sys.platform=='win32':
+            from .winssh import Stream
+            return Stream(self.config,command)
+        return subprocess.Popen(self.args()+[command],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    def forward_local(self,port):
+        if sys.platform=='win32':
+            from .winssh import Forward
+            return Forward(self.config,port)
+        args=self.args()
+        return subprocess.Popen(args[:-1]+['-N','-o','ExitOnForwardFailure=yes','-L',f'127.0.0.1:{port}:127.0.0.1:18081',args[-1]],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     def put(self,path,data,mode=0o600):
         q=shlex.quote(path);temporary=shlex.quote(path+'.new');parent=shlex.quote(path.rsplit('/',1)[0])
         expected=hashlib.sha256(data).hexdigest()

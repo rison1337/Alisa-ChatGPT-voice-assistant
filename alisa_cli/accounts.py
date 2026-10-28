@@ -15,7 +15,7 @@ def archive_settings(station):
     station.put(NATIVE+'/state/settings.json',json.dumps(fresh).encode())
 
 def install_session(config,candidate,destination):
-    station=Station(config);new=json.loads(candidate.read_text())
+    station=Station(config);new=json.loads(candidate.read_text(encoding='utf-8'))
     remote=TOOLS+'/auth-check'
     station.put(remote+'/web-session.json',candidate.read_bytes())
     try:
@@ -46,8 +46,7 @@ def login(config,change=False):
         station=Station(config)
         if station.run(TOOLS+'/vpn.sh status',check=False).returncode:raise RuntimeError('Для входа сначала запустите VLESS')
         with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
-        args=station.args();tunnel=subprocess.Popen(args[:-1]+['-N','-o','ExitOnForwardFailure=yes','-L',f'127.0.0.1:{port}:127.0.0.1:18081',args[-1]],
-            stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        tunnel=station.forward_local(port)
         proxy='socks5://127.0.0.1:'+str(port)
         time.sleep(.5)
         if tunnel.poll() is not None:raise RuntimeError('Не удалось открыть локальный канал входа через VLESS')
@@ -66,8 +65,12 @@ def login(config,change=False):
             argv=[sys.executable,str(ROOT/'engines/bridge/browser_login.py'),'--profile',str(profile)]
             environment,_=bridge_env(config)
         if proxy:argv+=['--proxy',proxy]
-        result=subprocess.run(argv,capture_output=True,timeout=120,**({'env':environment} if environment is not None else {}))
-        if result.returncode:raise RuntimeError('Вход ещё не подтверждён. Убедитесь, что ChatGPT открыт после входа, и повторите. Прежняя сессия сохранена.')
+        if native and sys.platform=='win32':
+            from .win_browser import import_session
+            import_session(profile,candidate,proxy)
+        else:
+            result=subprocess.run(argv,capture_output=True,timeout=120,**({'env':environment} if environment is not None else {}))
+            if result.returncode:raise RuntimeError('Вход ещё не подтверждён. Убедитесь, что ChatGPT открыт после входа, и повторите. Прежняя сессия сохранена.')
         if native:install_session(config,candidate,destination)
         if change:
             close_profile(canonical)

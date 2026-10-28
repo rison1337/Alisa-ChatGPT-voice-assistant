@@ -11,6 +11,11 @@ def command(mode):
     raise RuntimeError('Пакетный менеджер не распознан. Установите компоненты из README вручную.')
 
 def install(mode):
+    if sys.platform=='win32':
+        from .windows import missing
+        problems=missing()
+        if problems:raise RuntimeError('Установите Google Chrome или Microsoft Edge; библиотеки SSH входят в Windows-пакет. Не хватает: '+', '.join(problems))
+        return
     argv=command(mode)
     print('Установка компонентов:', ' '.join(argv))
     subprocess.run(argv,check=True)

@@ -1,5 +1,5 @@
 """Ordinary owner sign-in before any private session import is attached."""
-import ctypes,ctypes.util,hashlib,os,re,shutil,signal,sqlite3,subprocess,time
+import ctypes,ctypes.util,hashlib,os,re,shutil,signal,sqlite3,subprocess,time,sys
 from pathlib import Path
 
 PROC=Path('/proc')
@@ -30,6 +30,9 @@ def browser_page_ready(profile,after=None):
     Chromium holds its History database exclusively while it is open; it is
     unsuitable for detecting live sign-in. No debugger is attached here.
     """
+    if sys.platform=='win32':
+        from .win_browser import page_ready
+        return page_ready(profile)
     pid=profile_pid(profile)
     if pid is None:return False
     try:
@@ -91,6 +94,9 @@ def profile_pid(profile):
     Chromium may flatten /proc/cmdline into one argument, so exact argv
     membership alone cannot identify an existing profile on Linux.
     """
+    if sys.platform=='win32':
+        from .win_browser import profile_pid as windows_pid
+        return windows_pid(profile)
     profile=Path(profile).resolve();lock=profile/'SingletonLock'
     try:
         pid=int(os.readlink(lock).rsplit('-',1)[1])
@@ -103,6 +109,9 @@ def profile_pid(profile):
     return None
 
 def close_profile(profile):
+    if sys.platform=='win32':
+        from .win_browser import close_profile as close
+        return close(profile)
     pid=profile_pid(profile)
     if pid is None:return
     try:os.kill(pid,signal.SIGTERM)
@@ -113,6 +122,9 @@ def close_profile(profile):
     raise RuntimeError('Окно входа ещё закрывается. Дождитесь его закрытия и повторите вход; профиль сохранён.')
 
 def open_window(profile,proxy=None):
+    if sys.platform=='win32':
+        from .win_browser import open_window as open_browser
+        return open_browser(profile,proxy)
     profile=Path(profile).resolve()
     if not os.environ.get('DISPLAY'):raise RuntimeError('Для входа нужен рабочий стол Linux')
     chromium=shutil.which('chromium')

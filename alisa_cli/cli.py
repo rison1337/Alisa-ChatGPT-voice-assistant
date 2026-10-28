@@ -2,6 +2,7 @@ import argparse,copy,json,subprocess,sys,time
 from .state import ROOT,MODES,STYLES,STYLE_NAMES,VOICES,load,save,validate
 from . import doctor,network,runtime,autostart,accounts,vpn
 from . import ui,ssh_setup
+if sys.platform=='win32':MODES=('native',)
 
 NAMES={'native':'Нативный — обработка на колонке, ПК после установки не нужен',
        'bridge':'Мост — браузер ChatGPT на Linux-ПК, колонка передаёт звук'}
@@ -21,7 +22,7 @@ def show_storage(value):
 
 def installation_help():
     ui.note('Мастер установки','bold')
-    for line in ['1. Выберите нативный режим или браузерный мост.',
+    for line in [('1. Нативный режим: обработка на колонке.' if sys.platform=='win32' else '1. Выберите нативный режим или браузерный мост.'),
       '2. Введите IP, порт и пароль. После проверки сохранится SSH-ключ.',
       '3. Мастер проверит модель, прошивку и компоненты.',
       '4. Мастер по очереди предложит VPN, автозапуск, фразы и подсветку.',
@@ -171,8 +172,10 @@ def wizard(config):
     ui.note('Мастер сам выполнит проверки, предложит нужные настройки и запустит установленный режим.')
     ui.step(3,'Подключение и проверка колонки')
     import shutil
-    if any(not shutil.which(tool) for tool in ('ssh','ssh-keygen','ssh-keyscan')):
-        if yes('Установить OpenSSH-клиент через менеджер пакетов?',True):
+    if ssh_setup.missing_tools():
+        if sys.platform=='win32':
+            raise RuntimeError('Повреждены библиотеки Windows-пакета. Повторно запустите START-WINDOWS.cmd.')
+        elif yes('Установить OpenSSH-клиент через менеджер пакетов?',True):
             from . import dependencies
             dependencies.install('native')
     while True:
@@ -183,7 +186,10 @@ def wizard(config):
     report=doctor.inspect(config)
     if report['host_missing']:
         print('Нужны компоненты ПК:',', '.join(report['host_missing']))
-        if yes('Установить пакеты через системный менеджер?'):
+        if sys.platform=='win32':
+            from . import dependencies
+            dependencies.install(config['mode'])
+        elif yes('Установить пакеты через системный менеджер?'):
             from . import dependencies
             dependencies.install(config['mode'])
     report=doctor.inspect(config) if report['host_missing'] else report
@@ -220,7 +226,7 @@ def wizard(config):
     ui.note(('Обновление завершено.' if updating else 'Установка завершена.')+' Управление доступно в меню.','green')
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 2: нативный GPT или браузерный мост. Сначала выберите режим.')
+    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 2: тестовый нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 2: нативный GPT или браузерный мост. Сначала выберите режим.')
     parser.add_argument('mode',nargs='?',choices=MODES)
     parser.add_argument('action',nargs='?',choices=['install','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
     parser.add_argument('operation',nargs='?')

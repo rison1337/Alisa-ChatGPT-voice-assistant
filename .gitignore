@@ -16,3 +16,8 @@ __pycache__/
 *.pem
 *.key
 /engines/bridge/build/*.host.so
+/windows/runtime/
+/windows/vendor/
+/windows-package.json
+/assets/vpn/windows-amd64/
+/windows/source-files.json

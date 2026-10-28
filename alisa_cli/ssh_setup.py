@@ -4,6 +4,12 @@ from pathlib import Path
 from .state import HOME,save,write_private,validate
 from .ssh import Station
 
+def missing_tools():
+    if sys.platform=='win32':
+        try:from .winssh import library;library();return []
+        except RuntimeError:return ['Windows SSH libraries']
+    return [tool for tool in ('ssh','ssh-keygen','ssh-keyscan') if not __import__('shutil').which(tool)]
+
 def ip_valid(value):
     try:ipaddress.ip_address(value);return True
     except ValueError:return 'Введите IP колонки, например 192.168.1.50'
@@ -32,6 +38,9 @@ def _keys(raw):
 
 def trust_host(config,confirm):
     """TOFU only for a new endpoint; existing pins may never be replaced."""
+    if sys.platform=='win32':
+        from .winssh import trust
+        return trust(config,confirm)
     ip=config['host'];port=config['port'];endpoint=ip if port==22 else f'[{ip}]:{port}'
     scan=subprocess.run(['ssh-keyscan','-T','5','-p',str(port),ip],capture_output=True,timeout=18)
     offered=_keys(scan.stdout)
@@ -91,11 +100,14 @@ def password_channel(password):
 
 def install_key(config,password=None):
     validate(config)
+    if sys.platform=='win32':
+        from .winssh import install_key as install
+        return install(config,password)
     folder=HOME/'ssh';folder.mkdir(parents=True,exist_ok=True,mode=0o700)
     suffix=hashlib.sha256(f'{config["user"]}@{config["host"]}:{config["port"]}'.encode()).hexdigest()[:16]
     key=folder/('id_ed25519_'+suffix)
     if not key.exists():subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(key)],capture_output=True,check=True)
-    public=key.with_suffix('.pub').read_text().strip()
+    public=key.with_suffix('.pub').read_text(encoding='utf-8').strip()
     command='set -eu; [ "$(id -u)" = 0 ] || exit 9; umask 077; '
     command+='if [ -d /data/opt/etc/dropbear ] && pidof dropbear >/dev/null 2>&1; then f=/data/opt/etc/dropbear/authorized_keys; '
     command+='else mkdir -p "$HOME/.ssh"; f="$HOME/.ssh/authorized_keys"; fi; '
@@ -117,8 +129,8 @@ def install_key(config,password=None):
 
 def form(config,ui,allow_saved=False):
     """No discovery: all connection details come from the owner."""
-    for tool in ['ssh','ssh-keygen','ssh-keyscan']:
-        if not __import__('shutil').which(tool):raise RuntimeError('Нужен OpenSSH-клиент: отсутствует '+tool)
+    missing=missing_tools()
+    if missing:raise RuntimeError('Не хватает компонентов SSH: '+', '.join(missing))
     if allow_saved and config.get('ssh_explicit') and config.get('identity') and Path(config['identity']).is_file():
         endpoint=f'{config.get("user") or "root"}@{config["host"]}:{config.get("port") or 2222}'
         action=ui.select('Подключение к колонке',[(f'Использовать сохранённое: {endpoint}','reuse'),('Изменить IP, порт или пароль','edit')],default='reuse')
@@ -142,7 +154,7 @@ def form(config,ui,allow_saved=False):
         ui.note(f'Новый SSH-сервер: {ip}:{port}','cyan');ui.note(fingerprints.strip(),'muted')
         return ui.confirm('Подтвердить этот отпечаток SSH?',False)
     trust_host(candidate,confirm)
-    password=ui.secret('Пароль SSH колонки (Enter — использовать существующий ключ)',optional=True)
+    password=ui.secret('Пароль SSH колонки (Enter — сохранённый ключ)' if sys.platform=='win32' else 'Пароль SSH колонки (Enter — использовать существующий ключ)',optional=True)
     try:result=install_key(candidate,password or None)
     finally:password=None
     config.clear();config.update(candidate)
