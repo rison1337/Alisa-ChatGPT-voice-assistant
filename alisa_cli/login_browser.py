@@ -1,5 +1,5 @@
 """Ordinary owner sign-in before any private session import is attached."""
-import ctypes,ctypes.util,hashlib,os,re,shutil,signal,sqlite3,subprocess,time,sys
+import contextlib,ctypes,ctypes.util,hashlib,os,re,shutil,signal,sqlite3,subprocess,time,sys
 from pathlib import Path
 
 PROC=Path('/proc')
@@ -9,7 +9,7 @@ def session_fingerprint(profile):
     database=next((p for p in [Path(profile)/'Default/Network/Cookies',Path(profile)/'Default/Cookies'] if p.exists()),None)
     if database is None:return None
     try:
-        with sqlite3.connect(database.resolve().as_uri()+'?mode=ro',uri=True,timeout=.2) as connection:
+        with contextlib.closing(sqlite3.connect(database.resolve().as_uri()+'?mode=ro',uri=True,timeout=.2)) as connection:
             now=int((time.time()+11644473600)*1000000)
             rows=connection.execute("SELECT name, encrypted_value, value FROM cookies WHERE host_key IN ('.chatgpt.com','chatgpt.com') AND name LIKE '%session-token%' AND (expires_utc=0 OR expires_utc>?) ORDER BY name",(now,)).fetchall()
         rows=[row for row in rows if row[1] or row[2]]
@@ -81,6 +81,9 @@ class SignInWatcher:
         now=time.monotonic()
         if now-self.started>900:raise RuntimeError('Время ожидания входа истекло. Прежняя сессия сохранена.')
         fingerprint=session_fingerprint(self.profile)
+        if fingerprint is None and sys.platform=='win32':
+            from .win_browser import signed_in_page_ready
+            if signed_in_page_ready(self.profile):fingerprint=b'windows-owned-profile-menu'
         if fingerprint is not None and (not self.require_page or browser_page_ready(self.profile,self.wall_started)):
             if fingerprint!=self.fingerprint:self.fingerprint=fingerprint;self.stable_since=now
             return now-self.stable_since>=2

@@ -27,6 +27,27 @@ def browser():
         if found:candidates.append(Path(found))
     return next((p for p in candidates if p.is_file()),None)
 
+def browser_user_agent(executable):
+    """Use one normal Windows identity for sign-in and its subsequent import."""
+    from ctypes import wintypes as w
+    version=ctypes.WinDLL('version',use_last_error=True)
+    version.GetFileVersionInfoSizeW.argtypes=[w.LPCWSTR,ctypes.POINTER(w.DWORD)]
+    version.GetFileVersionInfoSizeW.restype=w.DWORD
+    version.GetFileVersionInfoW.argtypes=[w.LPCWSTR,w.DWORD,w.DWORD,ctypes.c_void_p]
+    version.VerQueryValueW.argtypes=[ctypes.c_void_p,w.LPCWSTR,ctypes.POINTER(ctypes.c_void_p),ctypes.POINTER(w.UINT)]
+    size=version.GetFileVersionInfoSizeW(str(executable),None)
+    if not size:return None
+    buffer=ctypes.create_string_buffer(size);value=ctypes.c_void_p();length=w.UINT()
+    if not version.GetFileVersionInfoW(str(executable),0,size,buffer):return None
+    if not version.VerQueryValueW(buffer,'\\',ctypes.byref(value),ctypes.byref(length)) or length.value<16:return None
+    fields=ctypes.cast(value,ctypes.POINTER(w.DWORD))
+    if fields[0]!=0xfeef04bd:return None
+    major=fields[2]>>16
+    if not 70<=major<=999:return None
+    identity=f'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36'
+    if Path(executable).name.lower()=='msedge.exe':identity+=f' Edg/{major}.0.0.0'
+    return identity
+
 def missing():
     result=[]
     try:import paramiko,websocket

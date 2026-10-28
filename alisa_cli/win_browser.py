@@ -3,9 +3,9 @@
 Normal sign-in has no automation/debugging flags. The subsequent import owns
 only its private profile; the user's regular Chrome/Edge is never terminated.
 """
-import contextlib,ctypes,json,os,re,subprocess,time,urllib.parse
+import base64,contextlib,ctypes,json,os,re,subprocess,time,urllib.parse
 from pathlib import Path
-from .windows import browser,private_directory,process_options
+from .windows import browser,browser_user_agent,private_directory,process_options
 
 _processes={}
 
@@ -34,6 +34,42 @@ def page_ready(profile):
     pid=profile_pid(profile)
     return bool(pid and any(login_title_ready(title) for _,title in windows_for_pid(pid)))
 
+def signed_in_page_ready(profile):
+    """Observe the owned window's profile-menu control without opening Cookies.
+
+    Current Windows Chromium locks Cookies while the window is open. UI
+    Automation exposes only a readiness signal here; session data is still
+    imported and verified separately before replacing any existing account.
+    """
+    pid=profile_pid(profile)
+    if not pid or not page_ready(profile):return False
+    script=r'''
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$element = [System.Windows.Automation.AutomationElement]
+$scope = [System.Windows.Automation.TreeScope]
+$owner = [System.Windows.Automation.PropertyCondition]::new($element::ProcessIdProperty, [int]OWNED_PID)
+$windows = $element::RootElement.FindAll($scope::Children, $owner)
+$names = @('Open profile menu', 'Открыть меню профиля', 'Меню профиля')
+foreach ($window in $windows) {
+    foreach ($name in $names) {
+        $label = [System.Windows.Automation.PropertyCondition]::new($element::NameProperty, $name)
+        $button = [System.Windows.Automation.PropertyCondition]::new($element::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+        $match = $window.FindFirst($scope::Descendants, [System.Windows.Automation.AndCondition]::new($label, $button))
+        if ($null -ne $match -and -not $match.Current.IsOffscreen) {
+            [Console]::Write('ALISA_SIGNED_IN'); exit 0
+        }
+    }
+}
+'''.replace('OWNED_PID',str(int(pid)))
+    encoded=base64.b64encode(script.encode('utf-16-le')).decode('ascii')
+    try:
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-EncodedCommand',encoded],
+            stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=5,**process_options())
+        return result.returncode==0 and result.stdout==b'ALISA_SIGNED_IN'
+    except (OSError,subprocess.SubprocessError):return False
+
 def close_profile(profile):
     key=str(Path(profile).resolve());process=_processes.get(key)
     if process is None or process.poll() is not None:return
@@ -55,7 +91,10 @@ def open_window(profile,proxy=None):
     if not executable:raise RuntimeError('Для входа нужен Google Chrome или Microsoft Edge.')
     private_directory(profile)
     args=[str(executable),'--user-data-dir='+str(profile),'--no-first-run',
-          '--no-default-browser-check','--disable-background-mode','--new-window']
+          '--no-default-browser-check','--disable-background-mode','--disable-extensions',
+          '--disable-sync','--force-renderer-accessibility','--start-maximized','--new-window']
+    identity=browser_user_agent(executable)
+    if identity:args.append('--user-agent='+identity)
     if proxy:args.append('--proxy-server='+proxy)
     process=subprocess.Popen(args+['https://chatgpt.com/'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     _processes[key]=process;time.sleep(.3)
@@ -90,6 +129,33 @@ class CDP:
         raise RuntimeError('Браузер не ответил на проверку входа.')
     def close(self):self.socket.close()
 
+def session_cookies(cookies):
+    """Keep chunked auth cookies from one domain/path instead of mixing them."""
+    prefixes=('__Secure-next-auth.session-token','__Secure-authjs.session-token')
+    groups={};allowed={}
+    valid=[c for c in cookies if c.get('domain','').lower() in ('chatgpt.com','.chatgpt.com') and c.get('path','/')=='/' and c.get('value')]
+    # The canonical site domain wins over older host-only auxiliary cookies.
+    for cookie in sorted(valid,key=lambda c:c['domain'].startswith('.')):
+        name=cookie['name']
+        if name in ('oai-did','cf_clearance'):allowed[name]=cookie['value']
+        for prefix in prefixes:
+            if name==prefix or re.fullmatch(re.escape(prefix)+r'\.(0|[1-9][0-9]*)',name):
+                groups.setdefault((prefix,cookie['domain'].lower()),{})[name]=cookie['value']
+    for prefix in prefixes:
+        candidates=[]
+        for (family,domain),values in groups.items():
+            if family!=prefix:continue
+            if prefix in values:
+                if len(values)!=1:continue
+            else:
+                indices=sorted(int(name.rsplit('.',1)[1]) for name in values)
+                if indices!=list(range(len(indices))):continue
+            candidates.append((domain.startswith('.'),values))
+        if candidates:allowed.update(max(candidates,key=lambda item:item[0])[1])
+    if not any('session-token' in name for name in allowed):
+        raise RuntimeError('Нет целостной обновляемой сессии. Повторите вход в отдельном окне.')
+    return allowed
+
 def import_session(profile,destination,proxy=None):
     from .state import write_private
     profile=Path(profile).resolve();executable=browser()
@@ -98,7 +164,10 @@ def import_session(profile,destination,proxy=None):
     (profile/'DevToolsActivePort').unlink(missing_ok=True)
     args=[str(executable),'--user-data-dir='+str(profile),'--headless=new',
           '--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',
-          '--no-first-run','--no-default-browser-check','--disable-background-mode']
+          '--no-first-run','--no-default-browser-check','--disable-background-mode',
+          '--disable-extensions','--disable-sync']
+    identity=browser_user_agent(executable)
+    if identity:args.append('--user-agent='+identity)
     if proxy:args.append('--proxy-server='+proxy)
     process=subprocess.Popen(args+['https://chatgpt.com/'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**process_options())
     _processes[str(profile)]=process;connection=None;started=time.time()
@@ -126,8 +195,7 @@ def import_session(profile,destination,proxy=None):
             time.sleep(.5)
         if not isinstance(data,dict) or not data.get('accessToken'):raise RuntimeError('Сохранённый вход не подтверждён. Прежняя сессия не заменена.')
         cookies=connection.call('Network.getCookies',{'urls':['https://chatgpt.com/']},session).get('cookies',[])
-        allowed={c['name']:c['value'] for c in cookies if c['name'].startswith(('__Secure-next-auth.session-token','__Secure-authjs.session-token')) or c['name'] in ('oai-did','cf_clearance')}
-        if not any('session-token' in key for key in allowed):raise RuntimeError('Нет обновляемой сессии. Повторите вход в отдельном окне.')
+        allowed=session_cookies(cookies)
         agent=connection.call('Runtime.evaluate',{'expression':'navigator.userAgent','returnByValue':True},session).get('result',{}).get('value')
         write_private(destination,{'access_token':data['accessToken'],'expires':data.get('expires'),
                                  'account_id':(data.get('account') or {}).get('id'),'cookies':allowed,'user_agent':agent})

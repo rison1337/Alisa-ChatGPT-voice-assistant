@@ -36,7 +36,8 @@ def configure(config,source,index=None,client='standard',selection=None):
         with tempfile.TemporaryDirectory(prefix='alisa-vless-') as folder:
             candidate=__import__('pathlib').Path(folder)/'config.json';write_private(candidate,value)
             check=subprocess.run([str(core),*(['run','-test'] if engine=='xray' else ['check']),'-c',str(candidate)],capture_output=True)
-        if check.returncode:raise RuntimeError(engine+' отклонил конфигурацию VLESS; параметры сервера не поддерживаются')
+        if check.returncode or (engine=='xray' and b'Configuration OK' not in check.stdout+check.stderr):
+            raise RuntimeError(engine+' отклонил конфигурацию VLESS; параметры сервера не поддерживаются')
     station=Station(config)
     from . import storage
     space=storage.report(config,vpn_engine=engine)

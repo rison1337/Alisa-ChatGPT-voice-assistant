@@ -81,6 +81,8 @@ def login(config,change=False):
         ui.note('Вход сохранён. Проверку голоса можно запустить через verify.','green')
     finally:
         candidate.unlink(missing_ok=True)
+        if native and sys.platform=='win32' and not tunnel:
+            close_profile(profile)
         if tunnel:
             try:close_profile(profile)
             finally:
