@@ -16,7 +16,7 @@ def source_files():
 def build(destination):
     names=source_files();manifest={}
     for folder in ('windows/runtime','windows/vendor','assets/vpn/windows-amd64'):
-        names += [str(p.relative_to(ROOT)) for p in (ROOT/folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix not in ('.pyc','.pyo')]
+        names += [p.relative_to(ROOT).as_posix() for p in (ROOT/folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix not in ('.pyc','.pyo')]
     for name in sorted(set(names)):
         source=ROOT/name
         if not source.is_file() or source.is_symlink():raise RuntimeError('Missing source: '+name)
