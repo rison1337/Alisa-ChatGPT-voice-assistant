@@ -87,14 +87,36 @@ try: menus.run('native',execute)
 except KeyboardInterrupt: print('CALLS',calls)
 """
   def drive(c):
-   c.expect('Нативный режим');self.menu_item(c,'main','@service');c.expect_screen('Обновить / настроить')
-   self.menu_item(c,'service',('help',None),enter=False);c.expect('RESULT help')
+   c.expect('Нативный режим');self.menu_item(c,'main','@service');c.expect_screen('Настроить / переустановить')
+   self.menu_item(c,'service',('help',None),enter=False);c.expect_screen('RESULT help')
    c.send('\r');time.sleep(.3)
    self.menu_item(c,'service','@checks');c.expect_screen('Колонка и компоненты')
-   c.send('\r');c.expect('RESULT doctor');c.sendcontrol('c');c.expect('CALLS')
+   c.send('\r');c.expect_screen('RESULT doctor');c.sendcontrol('c');c.expect('CALLS')
   output,result=self.run_terminal(code,drive)
   self.assertEqual(result,0);self.assertIn("['help', 'help', 'doctor']",output)
   self.assertEqual(output.count('\x1b[?1049h'),1);self.assertEqual(output.count('\x1b[?1049l'),1)
+
+ def test_update_offer_unwinds_the_dashboard_before_process_replacement(self):
+  code="""from alisa_cli import ui,menus,state,updates
+c=state.defaults('native');c.update(host='192.0.2.44',installed=True)
+menus.load=lambda mode:c
+updates.check=lambda **kwargs:dict(available=True,latest_version='99.0.0',current_version='0.3.0')
+updates.prepare=lambda *args,**kwargs:updates.UpdateScheduled('synthetic',[],'.')
+def execute(action,operation=None):
+ return updates.command([operation] if operation else [])
+try: menus.run('native',execute,start_page='updates')
+except updates.UpdateScheduled: print('UPDATE_EXITED_CLEANLY')
+"""
+  def drive(c):
+   c.expect_screen('Проверить и обновить');c.send('\r')
+   c.expect('Доступна Alisa Voice');c.send('\x1b[A\r');c.expect('UPDATE_EXITED_CLEANLY')
+  output,result=self.run_terminal(code,drive)
+  self.assertEqual(result,0);self.assertNotIn('Traceback',output)
+  # A nested confirmation suspends and restores the dashboard. Every entry
+  # must be balanced before the updater takes over the terminal.
+  self.assertGreaterEqual(output.count('\x1b[?1049h'),1)
+  self.assertEqual(output.count('\x1b[?1049h'),output.count('\x1b[?1049l'))
+  self.assertLess(output.rfind('\x1b[?1049l'),output.rfind('UPDATE_EXITED_CLEANLY'))
 
  def test_dashboard_dialog_returns_to_the_same_page(self):
   code="""from alisa_cli import ui,menus,state

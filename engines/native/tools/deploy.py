@@ -12,14 +12,27 @@ import wave
 ROOT=Path(__file__).resolve().parents[1]
 BASE='/data/opt/alisa-standalone'
 RUNTIME='/tmp/alisa-standalone'
-MAIND='7d431541e2737a94f8499953204dbb1306877e0cf7d36170c4b1a9e19974ba14'
-VQE='fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f'
 
 
 def ssh(host,command,data=None):
     if host.startswith('-') or any(c.isspace() for c in host):raise ValueError('Invalid SSH alias')
     return subprocess.run(['ssh','-T','-o','BatchMode=yes','-o','ConnectTimeout=6',host,command],
                           input=data,capture_output=True,check=True,timeout=30).stdout
+
+
+def check_firmware(host):
+    import sys
+    sys.path.insert(0,str(ROOT.parents[1]))
+    from alisa_cli.firmware import classify,ARCHITECTURES
+    compatible=ssh(host,'cat /proc/device-tree/compatible').decode(errors='replace')
+    pair=tuple(ssh(host,'sha256sum '+path).decode().split()[0] for path in
+               ['/system/vendor/quasar/maind','/system/vendor/quasar/libs/libyandex_evil.so'])
+    report=classify(compatible,pair)
+    if not report['model']:raise RuntimeError('Only Station Lite 1 and Lite 2 are supported')
+    if not report['firmware_files_present']:raise RuntimeError('Cannot read firmware components')
+    if ssh(host,'uname -m').decode().strip() not in ARCHITECTURES:raise RuntimeError('Unsupported station architecture')
+    for warning in report['warnings']:print(warning,file=sys.stderr)
+    return report
 
 
 def profiles(launch,quasar):
@@ -54,8 +67,7 @@ def main():
     parser.add_argument('--binary',type=Path,default=ROOT/'build/client/alisa-standalone',
                         help='Validated ARM client binary (default: build/client/alisa-standalone)')
     args=parser.parse_args()
-    for path,digest in [('/system/vendor/quasar/maind',MAIND),('/system/vendor/quasar/libs/libyandex_evil.so',VQE)]:
-        if ssh(args.host,'sha256sum '+path).decode().split()[0]!=digest:raise RuntimeError('Unverified firmware ABI')
+    check_firmware(args.host)
     launch=json.loads(ssh(args.host,'cat /system/vendor/quasar/launch.json'))
     quasar=json.loads(ssh(args.host,'cat /system/vendor/quasar/quasar.cfg'))
     launch,quasar=profiles(launch,quasar)

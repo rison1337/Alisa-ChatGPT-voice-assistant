@@ -19,7 +19,7 @@ import sys
 import time
 from audio_gain import SpeechGain
 from microphone_transport import MicrophoneTransport, limit_input_pipe
-from audio_focus import FOCUS_FILES, MAIND_SHA256, silent_lease
+from audio_focus import FOCUS_FILES, silent_lease
 from tts_profile import speech_profile, launcher_profile, ALSA_CONFIG
 from packet_audio import PacketEncoder, sender_socket
 
@@ -35,8 +35,6 @@ MICROPHONE_MODE = os.environ.get('ALICE_MICROPHONE_SOURCE', 'raw')
 if MICROPHONE_MODE not in ('raw', 'vqe'):
     raise ValueError('ALICE_MICROPHONE_SOURCE must be raw or vqe')
 MICROPHONE_RATE = 16000 if MICROPHONE_MODE == 'vqe' else 48000
-# Undocumented float32/channel enum ABI: refuse an unverified library build.
-VQE_LIBRARY_SHA256 = 'fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f'
 AUDIO_FOCUS_MODE = os.environ.get('ALICE_AUDIO_FOCUS_MODE', 'native')
 if AUDIO_FOCUS_MODE not in ('native', 'pause'):
     raise ValueError('ALICE_AUDIO_FOCUS_MODE must be native or pause')
@@ -88,16 +86,23 @@ def save_state(state: dict) -> None:
     temp.replace(STATE_FILE)
 
 
+def check_firmware(host: str) -> dict:
+    sys.path.insert(0,str(ROOT.parents[1]))
+    from alisa_cli.firmware import classify,ARCHITECTURES
+    compatible=ssh(host,'cat /proc/device-tree/compatible').decode(errors='replace')
+    pair=tuple(ssh(host,'sha256sum '+path).decode().split()[0] for path in
+               ['/system/vendor/quasar/maind','/system/vendor/quasar/libs/libyandex_evil.so'])
+    report=classify(compatible,pair)
+    if report['model']!='lite2':raise RuntimeError('The audio bridge supports only Station Lite 2')
+    if not report['firmware_files_present']:raise RuntimeError('Cannot read firmware components')
+    if ssh(host,'uname -m').decode().strip() not in ARCHITECTURES:raise RuntimeError('Unsupported station architecture')
+    for warning in report['warnings']:print(warning,file=sys.stderr)
+    return report
+
+
 def stage_station(host: str, write_file=None) -> None:
     """Add a nonblocking capture tap to a separate, temporary launcher profile."""
-    # Native focus and the isolated speech route both pin this firmware build.
-    digest = ssh(host, 'sha256sum /system/vendor/quasar/maind').decode().split()[0]
-    if digest != MAIND_SHA256:
-        raise RuntimeError('Unverified native speech/focus protocol for this maind build')
-    if MICROPHONE_MODE == 'vqe':
-        digest = ssh(host, 'sha256sum /system/vendor/quasar/libs/libyandex_evil.so').decode().split()[0]
-        if digest != VQE_LIBRARY_SHA256:
-            raise RuntimeError('Unverified VQE library ABI; select ALICE_MICROPHONE_SOURCE=raw')
+    check_firmware(host)
     stock = ssh(host, 'cat /etc/asound.conf').decode()
     launch = json.loads(ssh(host, 'cat /system/vendor/quasar/launch.json'))
     quasar = speech_profile(json.loads(ssh(host, 'cat /system/vendor/quasar/quasar.cfg')))

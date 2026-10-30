@@ -67,8 +67,9 @@ class ConfigTests(unittest.TestCase):
   self.assertEqual(network.classify(None),'Не удалось определить страну IP')
  def test_unsupported_firmware_reports_compatibility_in_plain_language(self):
   from alisa_cli import doctor
-  report={'ok':False,'root':True,'plum':True,'firmware_abi_supported':False,'free_data_kib':50000,'host_missing':[],'station_missing':[]}
-  with self.assertRaisesRegex(RuntimeError,'сборка прошивки ещё не поддерживается'):doctor.require(configured('native'),report=report)
+  report={'ok':True,'root':True,'plum':True,'firmware_abi_supported':False,'firmware_files_present':True,'free_data_kib':50000,'host_missing':[],'station_missing':[]}
+  with patch('alisa_cli.ui.note') as note:doctor.require(configured('native'),report=report)
+  self.assertIn('Установка разрешена',note.call_args.args[0])
  def test_systemd_escapes_paths(self):
   with patch.object(autostart,'ROOT',Path('/tmp/a project%name')):
    text=autostart.unit_text(state.defaults('bridge'))

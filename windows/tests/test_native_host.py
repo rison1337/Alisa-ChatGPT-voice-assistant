@@ -123,7 +123,7 @@ class BrowserAndPackageTests(unittest.TestCase):
             def package(content):
                 (root/'app.py').write_bytes(content)
                 (root/'windows-package.json').write_text(json.dumps({'package':module.PACKAGE,'files':{'app.py':hashlib.sha256(content).hexdigest()}}))
-            with patch.object(module,'ROOT',root),patch.object(module,'private_directory',side_effect=lambda path:Path(path).mkdir(parents=True,exist_ok=True)),patch('sys.platform','win32'),patch('sys.argv',['install.py','--no-run']),patch.dict(os.environ,{'LOCALAPPDATA':str(local)}):
+            with patch.object(module,'ROOT',root),patch.object(module,'install_launcher',return_value=('rem ALISA_VOICE_WINDOWS\n',folder/'supervisor')),patch.object(module,'private_directory',side_effect=lambda path:Path(path).mkdir(parents=True,exist_ok=True)),patch('sys.platform','win32'),patch('sys.argv',['install.py','--no-run']),patch.dict(os.environ,{'LOCALAPPDATA':str(local)}):
                 package(b'first');self.assertEqual(module.main(),0)
                 base=local/'AlisaVoice';state=base/'state';state.mkdir();(state/'keep.txt').write_text('saved state')
                 (base/'app'/'unknown.txt').write_text('user file')

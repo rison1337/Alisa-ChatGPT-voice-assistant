@@ -19,7 +19,8 @@ class Station:
             validate(self.config)
             from .winssh import run
             return run(self.config,command,data,check,timeout)
-        result=subprocess.run(self.args()+[command],input=data,capture_output=True,timeout=timeout)
+        stdin={'input':data} if data is not None else {'stdin':subprocess.DEVNULL}
+        result=subprocess.run(self.args()+[command],capture_output=True,timeout=timeout,**stdin)
         if check and result.returncode:
             # Never surface arbitrary remote stdout (which may contain credentials).
             error=result.stderr.decode(errors='replace')
@@ -52,7 +53,9 @@ cat > {temporary}
 [ "$(wc -c < {temporary})" -eq {len(data)} ]
 [ "$(sha256sum {temporary} | cut -d ' ' -f 1)" = {expected} ]
 chmod {mode:o} {temporary}
+sync
 mv {temporary} {q}
+sync
 trap - EXIT
 '''
         self.run(command,data=data,timeout=max(60,60+len(data)//(128*1024)))

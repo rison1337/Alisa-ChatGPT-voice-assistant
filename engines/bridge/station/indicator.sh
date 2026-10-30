@@ -2,6 +2,13 @@
 # Temporary ChatGPT LED ownership; no firmware files are edited.
 set -efu
 LED=${ALICE_LED_ROOT:-/sys/class/leds/plum}
+# Lite 1 (yandex,station-micro) has the same 3x3 ring under another name
+# and only a software microphone mute, so there is no switch to report.
+no_mute_switch=0
+if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ] && [ -e /sys/class/leds/micro:red:ring1 ]; then
+    LED=/sys/class/leds/micro
+fi
+case "$LED" in */micro) no_mute_switch=1 ;; esac
 MUTE_GPIO=${ALICE_MUTE_GPIO_STATUS:-/sys/kernel/debug/gpio}
 owned=0
 saved=''
@@ -36,6 +43,7 @@ mute_status() {
                 return 2 ;;
         esac
     done < "$MUTE_GPIO"
+    [ "$no_mute_switch" = 1 ] && return 1
     return 2
 }
 active_trigger() {

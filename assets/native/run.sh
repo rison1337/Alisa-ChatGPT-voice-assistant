@@ -59,6 +59,14 @@ case "${1:-}" in
         "$BASE/profile.sh" bridge
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
+            # Lite 1 has no hardware mute-switch GPIO; without one the client
+            # would silence the microphone. Software mute needs a device test.
+            if grep -Fq 'yandex,station-micro' /proc/device-tree/compatible &&
+               [ -r "$BASE/mute_gpio.so" ] && ! grep -q '|mute-switch ' /sys/kernel/debug/gpio 2>/dev/null; then
+                printf ' gpio-0 (                    |mute-switch         ) in  hi\n' > "$RUNTIME/mute-gpio"
+                export ALICE_MUTE_GPIO_FILE="$RUNTIME/mute-gpio"
+                export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }$BASE/mute_gpio.so"
+            fi
             exec "$BASE/bin/alisa-standalone" serve "$BASE/state"
         ) &
         task_child_pid=$!

@@ -7,7 +7,7 @@ NATIVE=ROOT/'engines/native'
 def main():
     target=ROOT/'assets/native';target.mkdir(parents=True,exist_ok=True)
     items={'bin/alisa-standalone':NATIVE/'build/client/alisa-standalone'}
-    for name in ['native_agent','vqe_tap','tts_gate']:items[name+'.so']=NATIVE/'build'/(name+'.so')
+    for name in ['native_agent','vqe_tap','tts_gate','mute_gpio']:items[name+'.so']=NATIVE/'build'/(name+'.so')
     for name in ['run.sh','profile.sh','indicator.sh']:items[name]=NATIVE/'station'/name
     items['mark.so']=ROOT/'build/mark.so'
     licenses={'webrtc-LICENSE':'webrtc-neteq/LICENSE','webrtc-PATENTS':'webrtc-neteq/PATENTS','webrtc-AUTHORS':'webrtc-neteq/AUTHORS',
@@ -23,7 +23,7 @@ def main():
     with wave.open(str(target/'focus-0.wav'),'wb') as output:
         output.setnchannels(1);output.setsampwidth(2);output.setframerate(16000);output.writeframes(bytes(16000*2*12))
     hashes={str(p.relative_to(target)):hashlib.sha256(p.read_bytes()).hexdigest() for p in target.rglob('*') if p.is_file() and p.name!='manifest.json'}
-    manifest={'schema':1,'model':'plum','architecture':'armhf','audio_engine':'WebRTC NetEq','revision':5,'files':hashes}
+    manifest={'schema':1,'model':'plum+micro','architecture':'armhf','audio_engine':'WebRTC NetEq','revision':5,'files':hashes}
     (target/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print('Native artifact manifest:',len(hashes),'files; no credentials included.')
 if __name__=='__main__':main()

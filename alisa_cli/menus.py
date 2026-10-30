@@ -4,7 +4,7 @@ from .state import load,STYLE_NAMES
 from . import ui
 
 TITLES={'main':'Нативный режим','settings':'Настройки','account':'Аккаунт ChatGPT',
-        'vpn':'VPN / VLESS','service':'Установка и обслуживание','checks':'Проверки','autostart':'Автозапуск'}
+        'vpn':'VPN / VLESS','service':'Установка и обслуживание','checks':'Проверки','autostart':'Автозапуск','updates':'Обновления'}
 
 def auto_entries(mode,config):
     values=[(('[✓]' if config.get('autostart') else '[ ]')+' Автозапуск GPT',('autostart','off' if config.get('autostart') else 'on'))]
@@ -28,8 +28,13 @@ def entries(mode,page,config=None):
         ('Сервер / подписка',('vpn','configure')),
         (('[✓]' if config.get('vpn',{}).get('autostart') else '[ ]')+' Автозапуск VLESS',('vpn','autostart-off' if config.get('vpn',{}).get('autostart') else 'autostart-on')),
         ('Не использовать VPN',('vpn','disable')),('Удалить VLESS и его файлы',('vpn','remove'))]
-    elif page=='service':values=[('Обновить / настроить' if config.get('installed') else 'Мастер установки',('install',None)),('Место и компоненты',('storage',None)),
+    elif page=='service':values=[('Обновления программы','@updates'),('Настроить / переустановить' if config.get('installed') else 'Мастер установки',('install',None)),('Место и компоненты',('storage',None)),
         ('Проверки','@checks'),('Подключение SSH',('ssh',None)),('Как работает установка',('help',None)),('Удалить программу',('uninstall',None))]
+    elif page=='updates':
+        from .updates import preferences
+        ask=preferences()['ask_on_start']
+        values=[('Проверить и обновить',('update',None)),
+                (('[✓]' if ask else '[ ]')+' Предлагать при запуске',('update','ask-off' if ask else 'ask-on'))]
     elif page=='checks':values=[('Колонка и компоненты',('doctor',None)),('Сеть ChatGPT',('network',None)),('Голосовой ответ',('verify',None))]
     elif page=='autostart':values=auto_entries(mode,config)
     else:raise ValueError('Неизвестная страница')
@@ -44,7 +49,7 @@ def run(mode,execute,start_page='main'):
         old=previous.get(page)
         if isinstance(old,tuple) and old not in [value for _,value in values]:
             candidates=[value for _,value in values if isinstance(value,tuple) and value[0]==old[0] and
-                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')))]
+                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')) or (old[0]=='update' and value[1] in ('ask-on','ask-off')))]
             if candidates:previous[page]=candidates[0]
         endpoint=(configuration.get('host') or 'IP ещё не указан')+':'+str(configuration.get('port') or 2222)
         subtitle=endpoint+'  ·  '+('Установлен' if configuration.get('installed') else 'Требуется установка')
@@ -52,7 +57,7 @@ def run(mode,execute,start_page='main'):
     def inline(choice):
         if isinstance(choice,str):return True
         action,operation=choice
-        return action in ('toggle','help','doctor','network','storage','status','start','stop','verify') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off'))
+        return action in ('toggle','help','doctor','network','storage','status','start','stop','verify') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off')) or (action=='update' and operation in ('ask-on','ask-off'))
     def location(context):return next(key for key,value in titles.items() if value==context)
     def read_request(context,choice):
         if choice=='back':return None
@@ -70,6 +75,11 @@ def run(mode,execute,start_page='main'):
         if mode=='native' and configuration['vpn'].get('enabled'):text+='\nАвтозапуск VLESS: '+('включён' if configuration['vpn'].get('autostart') else 'выключен')
         return text
     def hint(choice):
+        if choice=='@updates' or (isinstance(choice,tuple) and choice[0]=='update'):
+            from . import __version__
+            from .updates import preferences
+            return ('Версия программы: '+__version__+'\nПредложения при запуске: '+('включены' if preferences()['ask_on_start'] else 'выключены')+
+                    '\n\nНовая версия устанавливается после выбора «Обновить». Настройки, вход и чаты сохраняются. Для обновления установленных клиентов требуется SSH к колонке.')
         return {('login',None):'Вход в текущем профиле браузера. Подходит для первого входа и восстановления сессии.',
                 ('login','change'):'Откроется чистый профиль для другого аккаунта. Текущий вход сохранится до успешной проверки нового.',
                 ('logout',None):'Удалить текущий вход ChatGPT этого клиента. Чаты аккаунта на сайте и SSH колонки сохранятся.',

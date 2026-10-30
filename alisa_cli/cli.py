@@ -2,6 +2,7 @@ import argparse,copy,json,subprocess,sys,time
 from .state import ROOT,MODES,STYLES,STYLE_NAMES,VOICES,load,save,validate
 from . import doctor,network,runtime,autostart,accounts,vpn
 from . import ui,ssh_setup
+from . import __version__,updates
 if sys.platform=='win32':MODES=('native',)
 
 NAMES={'native':'Нативный — обработка на колонке, ПК после установки не нужен',
@@ -167,7 +168,7 @@ def installation_options(config,network_result):
 
 def wizard(config):
     updating=config.get('installed',False)
-    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 2 с готовыми root и SSH.')
+    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 1 или Лайт 2 с готовыми root и SSH. Мост — только Лайт 2.')
     if updating:ui.note('Уже установлено. Мастер обновит программу и настройки; вход ChatGPT и чаты сохранятся.','cyan')
     ui.note('Мастер сам выполнит проверки, предложит нужные настройки и запустит установленный режим.')
     ui.step(3,'Подключение и проверка колонки')
@@ -193,7 +194,7 @@ def wizard(config):
             from . import dependencies
             dependencies.install(config['mode'])
     report=doctor.inspect(config) if report['host_missing'] else report
-    show(report);doctor.require(config,report=report)
+    show(report);doctor.require(config,report=report,warn=False)
     ui.step(4,'Доступность ChatGPT');network_result=network.check(config);show(network_result)
     ui.step(5,'Настройка режима')
     ui.note('Сохранённый вход будет использован повторно; при необходимости его можно обновить после установки.' if updating else 'Вход в ChatGPT будет выполнен после установки клиента.')
@@ -226,9 +227,16 @@ def wizard(config):
     ui.note(('Обновление завершено.' if updating else 'Установка завершена.')+' Управление доступно в меню.','green')
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 2: тестовый нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 2: нативный GPT или браузерный мост. Сначала выберите режим.')
+    argv=list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0]=='update':
+        try:return updates.command(argv[1:])
+        except ui.Back:return 0
+        except (KeyboardInterrupt,EOFError):return 130
+        except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as error:ui.note(str(error),'red');return 1
+    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1/2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1/2: нативный GPT. Мост — Лайт 2. Сначала выберите режим.')
+    parser.add_argument('--version',action='version',version=__version__)
     parser.add_argument('mode',nargs='?',choices=MODES)
-    parser.add_argument('action',nargs='?',choices=['install','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
+    parser.add_argument('action',nargs='?',choices=['install','update','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
     parser.add_argument('operation',nargs='?')
     parser.add_argument('--host');parser.add_argument('--port',type=int);parser.add_argument('--user');parser.add_argument('--identity')
     parser.add_argument('--dry-run',action='store_true');parser.add_argument('--yes',action='store_true');parser.add_argument('--no-start',action='store_true')
@@ -238,6 +246,9 @@ def main(argv=None):
         interactive=not args.action
         if interactive:
             ui.banner()
+            updates.clean_downloads()
+            updates.show_result()
+            updates.startup_offer()
             requested_mode=args.mode
             while True:
                 mode=requested_mode or pick('1/7 Alisa Voice — выберите режим',[(NAMES[x],x) for x in MODES]+[('Выход','exit')])
@@ -260,6 +271,7 @@ def main(argv=None):
                 if args.mode:return 0
         mode=args.mode or pick('1/7 Alisa Voice — выберите режим',[(NAMES[x],x) for x in MODES])
         config=load(mode)
+        if args.action=='update':return updates.command([args.operation] if args.operation else [])
         for key in ['host','port','user','identity']:
             if getattr(args,key) is not None:config[key]=getattr(args,key)
         if args.action!='help' and not (args.action in ('install','ssh') and not args.yes and not args.dry_run):validate(config)

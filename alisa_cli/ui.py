@@ -293,7 +293,8 @@ def wait_until(title,ready,interval=.5):
     app.run(pre_run=lambda:app.create_background_task(watch()))
 
 LABELS={'mode':'Режим','phase':'Состояние','agent_connected':'Контроллер колонки','login_saved':'Вход ChatGPT сохранён',
- 'ssh':'Подключение SSH','root':'Права root','plum':'Модель Лайт 2','firmware_abi_supported':'Совместимая прошивка',
+ 'ssh':'Подключение SSH','root':'Права root','plum':'Модель поддерживается','model':'Модель','mode_supported':'Режим поддерживается',
+ 'firmware_version':'Версия прошивки','firmware_status':'Проверка прошивки','warnings':'Предупреждение',
  'architecture':'Архитектура','free_data_kib':'Свободно на колонке, КиБ','host_missing':'Отсутствуют компоненты ПК',
  'station_missing':'Отсутствуют компоненты колонки','ok':'Проверка пройдена','country':'Страна выхода','ip':'Внешний IP',
  'network_status':'Проверка IP','chatgpt_http_status':'HTTP ChatGPT','voice_verified':'Голос проверен','message':'Подробности',
@@ -304,6 +305,7 @@ LABELS={'mode':'Режим','phase':'Состояние','agent_connected':'Ко
  'voice_ui_opened':'Голосовой интерфейс открыт','direct_connection_selected':'Выбран режим без VPN',
  'removed':'Программа удалена','reclaimed_bytes':'Освобождено байт','backup':'Копия удалённых файлов'}
 LABELS.update(vpn_enabled='Используется для GPT',vpn_removed='VLESS удалён',files_updated='Обновлено файлов',files_unchanged='Файлов уже актуально')
+LABELS.update(current_version='Установленная версия',latest_version='Новая версия',available='Доступно обновление',ask_on_start='Предлагать при запуске',platform='Система')
 
 def show(value):
     if not interactive():print(json.dumps(value,ensure_ascii=False,indent=2));return
@@ -314,14 +316,16 @@ def show(value):
     # presents state and useful diagnostics rather than conversation UUIDs.
     for key,item in value.items():
         if key not in LABELS:continue
-        if key in ('host_missing','station_missing','error','error_message') and not item:continue
+        if key in ('host_missing','station_missing','error','error_message','warnings') and not item:continue
         label=LABELS[key]
         if isinstance(item,bool):plain='Да' if item else 'Нет';display=color('✓ Да','green') if item else color('— Нет','muted')
-        elif isinstance(item,list):plain=display=', '.join(map(str,item)) or 'нет'
+        elif isinstance(item,list):
+            plain=', '.join(map(str,item)) or 'нет'
+            display=color(plain,'yellow') if key=='warnings' else plain
         elif item is None:plain=display='не определено'
         elif key=='free_data_kib':label='Свободно на колонке';plain=display=f'{item/1024:.1f} МиБ'
         else:
-            plain=display={'native':'Нативный','bridge':'Мост','idle':'Готов к командам','active':'Разговор GPT','stopped':'Остановлен','starting':'Запускается','opening':'Подключается'}.get(str(item),str(item))
+            plain=display={'native':'Нативный','bridge':'Мост','lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','verified':'Проверенная сборка','unverified':'Совместимость не проверена','unsupported-model':'Модель не поддерживается','unavailable':'Компоненты не прочитаны','idle':'Готов к командам','active':'Разговор GPT','stopped':'Остановлен','starting':'Запускается','opening':'Подключается'}.get(str(item),str(item))
         if messages is not None:messages.append(label+': '+plain)
         if not quiet:print('  '+color(label.ljust(29),'muted')+' '+display)
     if not quiet:print()

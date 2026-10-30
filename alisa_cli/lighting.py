@@ -36,11 +36,12 @@ class Preview:
                             self.error='Сейчас идёт разговор GPT: демо не меняет его индикацию. Цвет можно выбрать и сохранить.'
                     if not self.error:
                         station=Station(self.config)
-                        station.run('test -d /sys/class/leds/plum:red:ring1',timeout=12)
+                        station.run('test -d /sys/class/leds/plum:red:ring1 || test -d /sys/class/leds/micro:red:ring1',timeout=12)
                         script=(ROOT/'assets/native/indicator.sh').read_text(encoding='utf-8')
                         # The demo restores the actual pre-demo frame, while the
                         # runtime normally restores idle darkness after a call.
                         script=script.replace("saved=' 0 0 0 0 0 0 0 0 0'",'saved="$task_led_current"')
+                        script=script.replace('listen=${ALISA_LISTEN_LED:-1}','listen=0')
                         self.process=station.open_input('sh -c '+shlex.quote(script))
                         self.thread=threading.Thread(target=self.animate,daemon=True);self.thread.start()
                 except (RuntimeError,OSError,subprocess.SubprocessError):self.error='Демо недоступно: проверьте SSH. Выбор цвета доступен.'
