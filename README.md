@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/222b4d58-75bb-4ee6-bbb1-db9dd40330e0
 | Лайт 2, мост | Проверен | В плане |
 | Лайт 1, мост | Пока не допускается | В плане |
 
-Подробности Лайт 1 и непроверенной программной кнопки микрофона: [совместимость](docs/lite1.md). Результаты Windows: [установщик](docs/windows-validation-20261030.md), [updater и launcher](CODEX-HANDOFF/06-WINDOWS-EXIT-CODE-FIX.txt).
+Подробности Лайт 1 и непроверенной программной кнопки микрофона: [совместимость](docs/lite1.md). Результаты Windows: [установщик](docs/windows-validation-20261030.md), [updater и launcher](docs/windows-updates-validation.md).
 
 ## Установка
 

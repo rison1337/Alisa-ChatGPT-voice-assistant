@@ -15,7 +15,7 @@ def source_files():
     # Include new source files before a commit as well as rebuilds without Git.
     # Generated runtimes and credentials are handled by separate allowlists.
     for pattern in ['alisa_cli/**/*.py','tests/test_*.py','windows/*.py','windows/tests/test_*.py',
-                    'scripts/*.py','docs/*.md','CODEX-HANDOFF/*.txt','engines/native/station/*.c',
+                    'scripts/*.py','docs/*.md','engines/native/station/*.c',
                     'engines/native/station/*.h','engines/native/station/*.sh']:
         names += [p.relative_to(ROOT).as_posix() for p in ROOT.glob(pattern) if p.is_file()]
     native=json.loads((ROOT/'assets/native/manifest.json').read_text(encoding='utf-8'))

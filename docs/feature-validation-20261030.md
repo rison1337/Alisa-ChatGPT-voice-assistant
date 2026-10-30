@@ -27,7 +27,7 @@
 
 Linux запускается в bwrap с временной точкой монтирования поверх существующего home, без изменения HOME и без доступа к сети. Windows запускается в Wine с отдельными LOCALAPPDATA/ALISA_HOME. Это проверяет освобождение старого Python и замену app, но не заменяет настоящую Windows.
 
-Журналы текущей ветки: `build/feature-*.log`; полные циклы: `build/linux-update-smoke/home/results.json` и `build/windows-update-smoke/results.json`. Они локальны и не включаются в релиз. Оставшаяся Windows-проверка описана в [TXT для Codex](../CODEX-HANDOFF/04-UPDATES.txt).
+Журналы текущей ветки: `build/feature-*.log`; полные циклы: `build/linux-update-smoke/home/results.json` и `build/windows-update-smoke/results.json`. Они локальны и не включаются в релиз. Последующий Windows-прогон описан в [результатах проверки обновлений](windows-updates-validation.md).
 
 ## Что ещё требует проверки
 
