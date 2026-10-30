@@ -46,7 +46,7 @@ def main():
     parser.add_argument('--record',type=Path,help=argparse.SUPPRESS)
     args,forwarded=parser.parse_known_args()
     if sys.platform!='win32':raise RuntimeError('Этот установщик запускается в Windows 10/11 x64.')
-    print('Alisa Voice — тестовая Windows-сборка нативного режима',flush=True)
+    print('Alisa Voice — Windows, нативный режим',flush=True)
     manifest=validate(ROOT)
     if args.check_only:
         print('Пакет цел: '+str(len(manifest['files']))+' файлов. Колонка и данные пользователя не изменены.');return 0

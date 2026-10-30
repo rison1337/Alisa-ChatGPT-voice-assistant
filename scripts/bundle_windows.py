@@ -36,7 +36,7 @@ def build(destination):
         manifest[name]=hashlib.sha256(target.read_bytes()).hexdigest()
     relative='windows/source-files.json';data=(json.dumps(source_files(),indent=2)+'\n').encode()
     (destination/relative).write_bytes(data);manifest[relative]=hashlib.sha256(data).hexdigest()
-    (destination/'windows-package.json').write_text(json.dumps({'schema':1,'package':'alisa-voice-windows-native','version':__version__,'platform':'windows-amd64','stage':'local-test-no-publication','files':manifest},indent=2)+'\n',encoding='utf-8')
+    (destination/'windows-package.json').write_text(json.dumps({'schema':1,'package':'alisa-voice-windows-native','version':__version__,'platform':'windows-amd64','stage':'release','files':manifest},indent=2)+'\n',encoding='utf-8')
     print('Windows test folder:',destination,'—',len(manifest),'files')
 
 def archive(folder):
