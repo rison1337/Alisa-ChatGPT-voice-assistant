@@ -159,6 +159,20 @@ class ReleaseOffer(unittest.TestCase):
             with patch.object(updates, 'check', side_effect=RuntimeError('offline')):
                 updates.startup_offer()
 
+    def test_failed_release_is_not_offered_on_startup_but_newer_release_and_manual_retry_are(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(updates,'HOME',Path(folder)), \
+             patch.object(updates,'ROOT',Path(folder)), patch.object(updates,'offer') as offer:
+            for phase in ('rolled_back','recovery_needed'):
+                (Path(folder)/'update-status.json').write_text(json.dumps({'phase':phase,'version':'99.0.0','notice_seen':True}))
+                value={'available':True,'latest_version':'99.0.0'}
+                with patch.object(updates,'check',return_value=value):updates.startup_offer()
+                offer.assert_not_called()
+                # The manual command still reaches the normal update offer.
+                with patch.object(updates,'check',return_value=value):updates.command([])
+                offer.assert_called_once();offer.reset_mock()
+                with patch.object(updates,'check',return_value={**value,'latest_version':'99.0.1'}):updates.startup_offer()
+                offer.assert_called_once();offer.reset_mock()
+
     def test_manual_cli_cancel_returns_cleanly(self):
         from alisa_cli import cli
         for error, code in [(updates.ui.Back, 0), (KeyboardInterrupt, 130)]:
@@ -274,6 +288,54 @@ class Archives(unittest.TestCase):
 
 
 class WorkerPreflight(unittest.TestCase):
+    def worker(self):
+        spec=importlib.util.spec_from_file_location('tested_update_worker',ROOT/'scripts/update_worker.py')
+        worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
+        return worker
+
+    def test_child_error_only_uses_known_public_codes(self):
+        worker=self.worker()
+        for data,expected in [(b'{"update_error":"ssh_unreachable","secret":"private"}','Нет подключения SSH'),
+                              (b'{"update_error":"private"}',None),(b'private',None)]:
+            with patch.object(worker.subprocess,'run',return_value=subprocess.CompletedProcess([],1,stdout=data,stderr=b'private')):
+                with self.assertRaises(RuntimeError) as caught:worker.execute(ROOT,'linux-x86_64',['native','status'],'проверка')
+            self.assertNotIn('private',str(caught.exception))
+            if expected:self.assertIn(expected,str(caught.exception))
+
+    def test_candidate_preflight_failure_does_not_replace_app_stop_or_restore_components(self):
+        worker=self.worker()
+        for failure in ('status','components','became_busy'):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as folder:
+                base=Path(folder);current=base/'app';payload=base/'payload';state=base/'state'
+                current.mkdir();payload.mkdir();state.mkdir()
+                job=base/'job.json'
+                job.write_text(json.dumps({'schema':1,'current_root':str(current),'payload':str(payload),
+                    'platform':'linux-x86_64','version':'2.0.0','parent_pid':0,
+                    'modes':[{'mode':'native','running':True}],'state_directory':str(state),'relaunch':True}))
+                cwd=Path.cwd()
+                observed=[]
+                def execute(root,target,args,phase,**kwargs):
+                    self.assertEqual(root,payload)
+                    observed.append(args)
+                    if args==['native','status'] and failure!='status':
+                        if failure=='became_busy' and len(observed)>1:return b'{"phase":"opening","agent_connected":true}'
+                        return b'{"phase":"idle","agent_connected":true}'
+                    if failure=='became_busy':return b'{}'
+                    raise RuntimeError('SSH недоступен' if failure=='status' else 'Проверка пакета не пройдена')
+                try:
+                    with patch.object(worker,'PAYLOAD',payload),patch.object(worker.app_install,'validate',return_value={'files':{}}), \
+                         patch.object(worker.app_install,'owned',return_value=True),patch.object(worker,'wait_previous_process'), \
+                         patch.object(worker,'execute',side_effect=execute) as calls,patch.object(worker,'install_application') as install, \
+                         patch.object(worker.app_install,'rollback') as rollback,patch.object(worker.os,'execv') as relaunch:
+                        self.assertEqual(worker.apply(job),1)
+                        install.assert_not_called();rollback.assert_not_called()
+                        relaunch.assert_not_called()
+                        self.assertEqual(calls.call_count,{'status':1,'components':2,'became_busy':3}[failure])
+                        if failure=='components':self.assertIn('--dry-run',calls.call_args.args[2])
+                        receipt=json.loads((state/'update-status.json').read_text())
+                        self.assertEqual(receipt['rollback_failures'],[])
+                finally:os.chdir(cwd)
+
     def test_busy_mode_recheck_does_not_stop_or_replace_anything(self):
         spec = importlib.util.spec_from_file_location('tested_update_worker', ROOT / 'scripts/update_worker.py')
         worker = importlib.util.module_from_spec(spec)
@@ -317,6 +379,7 @@ mode,action=args[:2]
 state=json.loads((device/'runtime.json').read_text())
 if action=='status':print(json.dumps(state));raise SystemExit()
 if action=='install':
+ if '--dry-run' in args:raise SystemExit()
  (device/'components.txt').write_text(VERSION)
  if os.environ.get('ALISA_FIXTURE_FAIL') and (VERSION=='2.0.0' or os.environ['ALISA_FIXTURE_FAIL']=='rollback'):raise SystemExit(1)
 elif action in ('start','stop'):
@@ -331,6 +394,7 @@ app_install.replace(Path(__file__).resolve().parents[1],Path(DESTINATION_VALUE),
 '''.replace('DESTINATION_VALUE', repr(str(destination)))
         files = {'alisa.py': script.encode(), 'scripts/release.py': installer.encode(),
                  'scripts/update_worker.py': (ROOT / 'scripts/update_worker.py').read_bytes(),
+                 'alisa_cli/errors.py': (ROOT / 'alisa_cli/errors.py').read_bytes(),
                  'alisa_cli/__init__.py': b'', 'alisa_cli/app_install.py': (ROOT / 'alisa_cli/app_install.py').read_bytes()}
         return package(base, version, contents=files)
 

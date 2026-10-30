@@ -1,6 +1,7 @@
 import json,os,shlex,subprocess,sys,time
 from .state import HOME,ROOT,load,save,write_private,command_file
-from .ssh import Station
+from .ssh import Station,check_result
+from .errors import PublicError
 NATIVE='/data/opt/alisa-standalone'
 TOOLS='/data/opt/alisa-cli'
 
@@ -20,9 +21,16 @@ def bridge_command(config,action,**kwargs):
 def status(config):
     if config['mode']=='native':
         r=Station(config).run(NATIVE+'/bin/alisa-standalone status',check=False)
+        if r.returncode==255:check_result(r)
         try:result=json.loads(r.stdout)
-        except ValueError:result={'phase':'stopped','login_saved':False}
+        except ValueError:
+            check_result(r)
+            raise PublicError('station_reply_invalid') from None
+        if not isinstance(result,dict):raise PublicError('station_reply_invalid')
         if result.get('error')=='control_unavailable':result={'phase':'stopped','agent_connected':False,'error':''}
+        else:
+            check_result(r)
+            if not isinstance(result.get('phase'),str):raise PublicError('station_reply_invalid')
         return {'mode':'native',**result}
     if sys.platform!='linux':return {'mode':'bridge','phase':'unsupported','error':'Windows ещё не проверена'}
     r=bridge_command(config,'status')

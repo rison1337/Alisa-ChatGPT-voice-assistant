@@ -299,6 +299,12 @@ def startup_offer():
     except (RuntimeError, OSError, ValueError, KeyError, TypeError):
         return  # Network availability must never prevent using the installed CLI.
     try:
+        previous = json.loads((HOME / 'update-status.json').read_text(encoding='utf-8'))
+        if previous.get('version') == value.get('latest_version') and previous.get('phase') in ('rolled_back', 'recovery_needed'):
+            return  # Manual retry remains available; a newer release is offered normally.
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
         offer(value, startup=True)
     except ui.Back:
         return
@@ -317,6 +323,8 @@ def show_result():
         ui.note(value.get('message', 'Обновление завершено.'), 'green' if value.get('phase') == 'complete' else 'yellow')
         if value.get('rollback_failures'):
             ui.note('Требуется проверка компонентов: ' + ', '.join(value['rollback_failures']), 'yellow')
+        if value.get('phase') in ('rolled_back', 'recovery_needed'):
+            ui.note('Повторить обновление можно в меню обслуживания. Эта версия больше не предлагается при запуске.', 'yellow')
         value['notice_seen'] = True
         write_private(path, value)
     except (OSError, ValueError, TypeError):

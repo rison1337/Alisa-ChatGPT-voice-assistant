@@ -19,7 +19,7 @@ class WindowsWorkerTransaction(unittest.TestCase):
     def package(self,root,version):
         root.mkdir(parents=True)
         shutil.copytree(ROOT/'windows/runtime',root/'windows/runtime')
-        for name in ('alisa_cli/app_install.py','alisa_cli/windows.py','windows/install.py','windows/launcher.py','scripts/update_worker.py'):
+        for name in ('alisa_cli/app_install.py','alisa_cli/errors.py','alisa_cli/windows.py','windows/install.py','windows/launcher.py','scripts/update_worker.py'):
             target=root/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/name,target)
         (root/'alisa_cli/__init__.py').write_text('__version__='+repr(version)+'\n',encoding='utf-8')
         script='''import json,os,sys
@@ -31,6 +31,7 @@ if not args:raise SystemExit()
 mode,action=args[:2];state=json.loads((device/'runtime.json').read_bytes())
 if action=='status':print(json.dumps(state));raise SystemExit()
 if action=='install':
+ if '--dry-run' in args:raise SystemExit()
  (device/'components.txt').write_text(VERSION)
  if os.environ.get('ALISA_FIXTURE_FAIL') and (VERSION=='2.0.0' or os.environ['ALISA_FIXTURE_FAIL']=='rollback'):raise SystemExit(1)
 elif action in ('start','stop'):

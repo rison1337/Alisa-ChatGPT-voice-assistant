@@ -11,6 +11,7 @@ import time
 PAYLOAD = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PAYLOAD))
 from alisa_cli import app_install
+from alisa_cli.errors import MESSAGES
 
 
 def python_for(root, target):
@@ -19,11 +20,13 @@ def python_for(root, target):
 
 def execute(root, target, arguments, phase, timeout=300):
     argv = [python_for(root, target), '-B', '-X', 'utf8', str(Path(root) / 'alisa.py'), *arguments]
-    result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+    result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout,
+                            env={**os.environ, 'ALISA_UPDATE_WORKER':'1'})
     if result.returncode:
-        # Child output can include private account/runtime fields. Preserve
-        # only the operation name and result; never echo argv or raw output.
-        raise RuntimeError('Не выполнен этап: ' + phase)
+        # Recognise only fixed public error codes, never arbitrary child output.
+        try:detail = MESSAGES.get(json.loads(result.stdout).get('update_error'))
+        except (ValueError, AttributeError, TypeError):detail = None
+        raise RuntimeError('Не выполнен этап: ' + phase + ('. ' + detail if detail else ''))
     return result.stdout
 
 
@@ -71,17 +74,25 @@ def apply(job_path):
     result = {'phase': 'starting', 'version': version, 'job': str(job_path.parent), 'modes': modes}
     record = None
     stopped, attempted, started = [], [], []
-    try:
+    def check_modes():
         for item in modes:
             mode = item['mode']
             if mode not in ('native', 'bridge'):
                 raise RuntimeError('Неизвестный режим обновления.')
-            state = json.loads(execute(root, target, [mode, 'status'], 'проверка состояния ' + mode))
+            # Use the verified candidate's diagnostics even when the installed
+            # version used to mistake an SSH failure for a stopped controller.
+            state = json.loads(execute(payload, target, [mode, 'status'], 'проверка состояния ' + mode))
             if state.get('voice_active') or state.get('phase') in ('active', 'connecting', 'opening', 'starting', 'stopping'):
                 raise RuntimeError('Сначала закройте голосовой чат. Программа не заменена.')
             # Recheck readiness immediately before mutation; the download may
             # have taken time and voice commands can arrive in that interval.
             item['running'] = bool(state.get('agent_connected')) if mode == 'native' else state.get('phase') == 'running'
+    try:
+        check_modes()
+        for item in modes:
+            execute(payload, target, [item['mode'], 'install', '--yes', '--no-start', '--dry-run'],
+                    'проверка компонентов ' + item['mode'], timeout=900)
+        check_modes()  # Voice may have opened during the component preflight.
         for item in modes:
             if item['running']:
                 print('Останавливаю компоненты: ' + item['mode'], flush=True)
@@ -141,7 +152,10 @@ def apply(job_path):
                 failures.append('запуск ' + item['mode'])
         result.update(phase='recovery_needed' if failures else 'rolled_back', message=message, rollback_failures=failures)
         print(message, flush=True)
-        print('Нужна проверка: ' + ', '.join(failures) if failures else 'Прежняя программа и работающие режимы восстановлены.', flush=True)
+        summary = ('Нужна проверка: ' + ', '.join(failures) if failures else
+                   'Обновление не началось. Программа и компоненты не изменены.' if not record and not stopped and not attempted else
+                   'Прежняя программа и работающие режимы восстановлены.')
+        print(summary, flush=True)
     result['finished_at'] = time.time()
     try:
         if result['phase'] in ('complete','rolled_back'):
@@ -160,7 +174,9 @@ def apply(job_path):
         pass  # Cache cleanup cannot invalidate a completed installation.
     app_install.private_json(job_path.parent/'result.json',result)
     app_install.private_json(receipt, result)
-    if job.get('relaunch'):
+    # A rolled-back CLI may predate failed-version suppression. Finish with the
+    # error instead of immediately relaunching it into the same update offer.
+    if job.get('relaunch') and result['phase'] == 'complete':
         executable = python_for(root, target)
         if os.name == 'nt':
             relaunched = subprocess.call([executable, '-B', '-X', 'utf8', str(root / 'alisa.py')])

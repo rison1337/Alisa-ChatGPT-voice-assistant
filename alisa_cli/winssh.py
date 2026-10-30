@@ -1,6 +1,7 @@
 """Pinned SSH transport for Windows. Passwords are kept only in memory."""
 import base64,hashlib,select,socket,subprocess,threading,time
 from pathlib import Path
+from .errors import PublicError
 
 def library():
     try:import paramiko;return paramiko
@@ -51,9 +52,9 @@ def connect(config,password=None):
                        password=password,key_filename=str(identity) if identity else None,
                        allow_agent=False,look_for_keys=False,timeout=8,banner_timeout=12,auth_timeout=12)
         client.get_transport().set_keepalive(5);return client
-    except p.BadHostKeyException:client.close();raise RuntimeError('SSH-ключ колонки изменился. Подключение остановлено.') from None
-    except p.AuthenticationException:client.close();raise RuntimeError('SSH-доступ отклонён. Проверьте пароль или сохранённый ключ.') from None
-    except (OSError,p.SSHException):client.close();raise RuntimeError('Не удалось подключиться по SSH. Проверьте адрес, порт и сеть.') from None
+    except p.BadHostKeyException:client.close();raise PublicError('ssh_hostkey') from None
+    except p.AuthenticationException:client.close();raise PublicError('ssh_auth') from None
+    except (OSError,p.SSHException):client.close();raise PublicError('ssh_unreachable') from None
 
 def run(config,command,data=None,check=True,timeout=60,password=None):
     client=connect(config,password);channel=None

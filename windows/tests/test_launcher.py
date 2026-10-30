@@ -31,6 +31,7 @@ def main():
  mode,action=args[:2]
  if action=='status':print(json.dumps(state));return 0
  if action=='install':
+  if '--dry-run' in args:return 0
   (device/'components.txt').write_text(__version__)
   if os.environ.get('ALISA_FIXTURE_FAIL') in ('candidate','rollback') and (__version__=='2.0.0' or os.environ['ALISA_FIXTURE_FAIL']=='rollback'):return 1
  elif action in ('start','stop'):
@@ -61,7 +62,7 @@ class WindowsLauncher(unittest.TestCase):
     def package(cls, root, version):
         root.mkdir()
         shutil.copytree(ROOT / 'windows/runtime', root / 'windows/runtime')
-        names = ['alisa_cli/' + name + '.py' for name in ('app_install', 'windows', 'state', 'updates', 'ui')]
+        names = ['alisa_cli/' + name + '.py' for name in ('app_install', 'errors', 'windows', 'state', 'updates', 'ui')]
         names += ['windows/install.py', 'windows/launcher.py', 'scripts/update_worker.py']
         for name in names:
             target = root / name;target.parent.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,16 @@
 import hashlib,shlex,subprocess,sys
 from pathlib import Path
 from .state import HOME,write_private,validate
+from .errors import PublicError
+
+def check_result(result):
+    if not result.returncode:return
+    # Only fixed messages cross the UI boundary; arbitrary SSH output is private.
+    error=result.stderr.decode(errors='replace')
+    if 'Host key verification failed' in error:raise PublicError('ssh_hostkey')
+    if 'Permission denied' in error:raise PublicError('ssh_auth')
+    if result.returncode==255:raise PublicError('ssh_unreachable')
+    raise RuntimeError(f'Команда на колонке завершилась с кодом {result.returncode}')
 
 class Station:
     def __init__(self,config):self.config=config
@@ -20,13 +30,9 @@ class Station:
             from .winssh import run
             return run(self.config,command,data,check,timeout)
         stdin={'input':data} if data is not None else {'stdin':subprocess.DEVNULL}
-        result=subprocess.run(self.args()+[command],capture_output=True,timeout=timeout,**stdin)
-        if check and result.returncode:
-            # Never surface arbitrary remote stdout (which may contain credentials).
-            error=result.stderr.decode(errors='replace')
-            if 'Host key verification failed' in error:raise RuntimeError('SSH-ключ хоста не проверен. Сначала подключитесь обычной командой ssh и проверьте отпечаток.')
-            if 'Permission denied' in error:raise RuntimeError('SSH-доступ отклонён. Проверьте пользователя, порт и ключ; команда ssh setup поможет установить отдельный ключ.')
-            raise RuntimeError(f'Команда на колонке завершилась с кодом {result.returncode}')
+        try:result=subprocess.run(self.args()+[command],capture_output=True,timeout=timeout,**stdin)
+        except subprocess.TimeoutExpired:raise PublicError('ssh_timeout') from None
+        if check:check_result(result)
         return result
     def text(self,command,**kwargs):return self.run(command,**kwargs).stdout.decode()
     def open_input(self,command):

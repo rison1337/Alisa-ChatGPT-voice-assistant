@@ -352,6 +352,9 @@ def main(argv=None):
     except ui.Back:ui.note('Изменения отменены. Возврат в меню.');return 0
     except (KeyboardInterrupt,EOFError):ui.note('\nОперация прервана.','yellow');return 130
     except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as error:
+        from .errors import PublicError
+        if __import__('os').environ.get('ALISA_UPDATE_WORKER')=='1' and isinstance(error,PublicError):
+            print(json.dumps({'update_error':error.code}));return 1
         # Unexpected subprocess errors can contain commands; avoid printing those.
         if isinstance(error,subprocess.SubprocessError):ui.note('Ошибка внешнего компонента; проверьте doctor и status.','red')
         else:ui.note(str(error),'red')
