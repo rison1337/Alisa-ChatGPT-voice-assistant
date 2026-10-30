@@ -26,13 +26,13 @@ def write_private(path,value):
 def defaults(mode):
     if mode not in MODES:raise ValueError('Выберите native или bridge')
     return {'version':1,'mode':mode,'host':'','user':'root','port':2222,'identity':None,
-        'autostart':False,'led':'rainbow','phrases':dict(DEFAULT_PHRASES),'installed':False,
+        'autostart':False,'led':'rainbow','listen_led':False,'phrases':dict(DEFAULT_PHRASES),'installed':False,
         'vpn':{'enabled':False,'autostart':False,'required':False}}
 
 def load(mode):
     p=HOME/mode/'config.json'
     if not p.exists():return defaults(mode)
-    value=json.loads(p.read_text(encoding='utf-8'));validate(value);return value
+    value=json.loads(p.read_text(encoding='utf-8'));value.setdefault('listen_led',False);validate(value);return value
 
 def save(value):
     validate(value);write_private(HOME/value['mode']/'config.json',value)
@@ -59,4 +59,5 @@ def validate(value):
     if value.get('port') is not None and (not isinstance(value['port'],int) or not 1<=value['port']<=65535):raise ValueError('Некорректный SSH-порт')
     if value.get('user') and not re.fullmatch('[a-zA-Z0-9_-]+',value['user']):raise ValueError('Некорректный SSH-пользователь')
     if value.get('led') not in STYLES:raise ValueError('Неизвестный цвет/анимация')
+    if not isinstance(value.get('listen_led',False),bool):raise ValueError('Подсветка в паузах должна быть включена или выключена')
     command_file(value['phrases'])

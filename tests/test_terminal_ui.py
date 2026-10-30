@@ -174,6 +174,26 @@ except KeyboardInterrupt: print('CALLS',calls)
   self.assertIn("[('autostart', 'on'), ('vpn', 'autostart-on'), ('vpn', 'autostart-off')]",output)
   self.assertNotIn('Настроить галочками',output)
 
+ def test_listening_wave_checkbox_switches_with_space_and_stays_selected(self):
+  code="""from alisa_cli import ui,menus,state
+c=state.defaults('native');c.update(host='192.0.2.44',installed=True)
+menus.load=lambda mode:c
+calls=[]
+def execute(action,operation=None):
+ calls.append((action,operation));c['listen_led']=operation=='listen-on'
+ ui.note('LISTEN '+str(c['listen_led']));return 0
+try: menus.run('native',execute,start_page='settings')
+except KeyboardInterrupt: print('CALLS',calls)
+"""
+  def drive(c):
+   c.expect('Настройки');self.menu_item(c,'settings',('settings','listen-on'),enter=False)
+   c.expect_screen('В паузах GPT: выключена')
+   c.send(' ');time.sleep(.4);c.send(' ');time.sleep(.4)
+   c.sendcontrol('c');c.expect('CALLS')
+  output,result=self.run_terminal(code,drive)
+  self.assertEqual(result,0);self.assertIn("[('settings', 'listen-on'), ('settings', 'listen-off')]",output)
+  self.assertEqual(output.count('\x1b[?1049h'),1)
+
  def test_vpn_page_toggles_autostart_and_offers_file_removal(self):
   code="""from alisa_cli import ui,menus,state
 c=state.defaults('native');c.update(host='192.0.2.44',installed=True);c['vpn']['enabled']=True

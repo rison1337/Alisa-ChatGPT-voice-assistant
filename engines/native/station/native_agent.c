@@ -40,7 +40,7 @@ struct agent {
     int fd, chat, recognizing, output_active, native_state, pause_pending;
     char listening[37], current_request[37], seen[64][37];
     unsigned int seen_count, commands, recognition_starts, speech_stops, native_speech_events, wake_blocks;
-    unsigned int queue_clear_requests;
+    unsigned int queue_clear_requests, music_pause_requests;
     double heartbeat;
     int focus_enabled, focus_current, focus_pending, focus_owned[2], focus_ready;
     unsigned int focus_serial, focus_acquires, focus_releases;
@@ -188,7 +188,19 @@ static int pause_player(struct agent *a) {
     n += put_bytes(source + n, 6, "ChatGPTVoice", 12);
     size_t length = 2 + put_bytes(method + 2, 5, source, n);
     method[length++] = 56; method[length++] = 0;
-    return rpc(a, "PlaybackControlCapability", 13, method, length);
+    if (!rpc(a, "PlaybackControlCapability", 13, method, length)) return 0;
+    a->music_pause_requests++;
+    return 1;
+}
+
+static int request_music_pause(struct agent *a) {
+    /* A playback directive during recognition can cancel its input. Remember
+     * this one entry pause until IDLE instead of running a periodic guard. */
+    if (a->native_state == 1 || a->native_state == 3) {
+        a->pause_pending = 1;
+        return 1;
+    }
+    return pause_player(a);
 }
 
 #include "custom_commands.h"
@@ -241,13 +253,13 @@ static void status(struct agent *a, const char *event) {
         "{\"event\":\"%s\",\"pid\":%d,\"mode\":\"%s\",\"recognition_starts\":%u,"
         "\"commands\":%u,\"speech_stops\":%u,\"recognition_active\":%d,"
         "\"native_state\":%d,\"native_speech_events\":%u,\"output_active\":%d,\"wake_blocks\":%u,"
-        "\"queue_clear_requests\":%u,\"focus_enabled\":%d,\"focus_ready\":%d,"
+        "\"queue_clear_requests\":%u,\"music_pause_requests\":%u,\"pause_pending\":%d,\"focus_enabled\":%d,\"focus_ready\":%d,"
         "\"focus_acquires\":%u,\"focus_releases\":%u,"
         "\"focus_guard_pid\":%d,\"focus_recovering\":%d,"
         "\"focus_yields\":%u,\"focus_reacquires\":%u,\"tts_gate_enabled\":%d}\n", event, getpid(),
         a->chat ? "chat" : "idle", a->recognition_starts, a->commands, a->speech_stops,
         a->recognizing, a->native_state, a->native_speech_events, a->output_active, a->wake_blocks,
-        a->queue_clear_requests, a->focus_enabled, a->focus_ready,
+        a->queue_clear_requests, a->music_pause_requests, a->pause_pending, a->focus_enabled, a->focus_ready,
         a->focus_acquires, a->focus_releases, a->focus_guard_pid,
         a->focus_recovering, a->focus_yields, a->focus_reacquires, !!a->tts_gate_file);
     if (n > 0 && (size_t)n < sizeof(text) && !output(1, text, (size_t)n)) stopping = 1;
@@ -544,7 +556,12 @@ static int control(struct agent *a, const char *line) {
     if (a->focus_enabled && write(a->focus_guard_fd, "P", 1) != 1) return 0;
     if (!strcmp(line, "PING")) status(a, "status");
     else if (!strcmp(line, "CHAT")) {
-        if (!a->chat) a->focus_session_ready = 0;
+        if (!a->chat) {
+            a->focus_session_ready = 0;
+            /* Focus may only duck MEDIA; make the underlying music stay
+             * paused, including after the GPT dialog releases its focus. */
+            if (!request_music_pause(a)) return 0;
+        }
         a->chat = 1;
         if (!tts_lease_refresh(a->tts_gate_file)) return 0;
         a->focus_closing = 0;

@@ -82,7 +82,7 @@ def settings(config,apply=True,fields=('phrases','led')):
     else:ui.note('Настройки выбраны.','green')
 
 def save_preferences(config,previous):
-    if all(config[key]==previous[key] for key in ('phrases','led')):
+    if all(config.get(key)==previous.get(key) for key in ('phrases','led','listen_led')):
         ui.note('Настройки не изменились.');return
     runtime.update_preferences(config,previous)
     save(config);ui.note('Настройки сохранены.','green')
@@ -305,7 +305,12 @@ def main(argv=None):
                 if yes('Удалить программу выбранного режима?',False):show(uninstall.remove(config,value))
                 else:ui.note('Удаление отменено.')
         elif action=='settings':
-            if args.led:
+            if args.operation in ('listen-on','listen-off'):
+                if mode!='native':raise ValueError('Подсветка в паузах настраивается для нативного режима')
+                previous=copy.deepcopy(config);config['listen_led']=args.operation=='listen-on'
+                save_preferences(config,previous)
+                ui.note('Подсветка в паузах GPT '+('включена.' if config['listen_led'] else 'выключена.'))
+            elif args.led:
                 previous=copy.deepcopy(config);config['led']=args.led
                 save_preferences(config,previous)
             elif args.operation in ('phrases','led'):settings(config,fields=(args.operation,))

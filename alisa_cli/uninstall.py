@@ -12,7 +12,7 @@ def plan(config):
         paths=native_paths()
     else:paths=list(storage.payload(config,station))
     if config['mode']=='native':
-        paths += [runtime.NATIVE+'/commands.txt',runtime.NATIVE+'/runtime.env',
+        paths += [runtime.NATIVE+'/commands.txt',runtime.NATIVE+'/runtime.env',runtime.NATIVE+'/listen-led',
                   runtime.TOOLS+'/xray',runtime.TOOLS+'/sing-box',runtime.TOOLS+'/vpn-required',
                   runtime.TOOLS+'/native-autostart',runtime.TOOLS+'/vpn-autostart']
     existing=storage.remote_sizes(station,paths)

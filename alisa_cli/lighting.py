@@ -41,8 +41,7 @@ class Preview:
                         # The demo restores the actual pre-demo frame, while the
                         # runtime normally restores idle darkness after a call.
                         script=script.replace("saved=' 0 0 0 0 0 0 0 0 0'",'saved="$task_led_current"')
-                        script=script.replace('listen=${ALISA_LISTEN_LED:-1}','listen=0')
-                        self.process=station.open_input('sh -c '+shlex.quote(script))
+                        self.process=station.open_input('ALISA_LISTEN_LED=0 ALISA_LISTEN_LED_FILE= sh -c '+shlex.quote(script))
                         self.thread=threading.Thread(target=self.animate,daemon=True);self.thread.start()
                 except (RuntimeError,OSError,subprocess.SubprocessError):self.error='Демо недоступно: проверьте SSH. Выбор цвета доступен.'
             if self.process is not None and self.process.poll() is not None:self.error='Демо завершилось: проверьте SSH. Выбор цвета доступен.'

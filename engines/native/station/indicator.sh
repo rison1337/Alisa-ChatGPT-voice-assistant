@@ -16,10 +16,19 @@ saved_triggers=''
 painted=''
 blue=' 0 0 160 0 0 160 0 0 160'
 # The client sends dark frames whenever GPT is silent, i.e. while the owner
-# speaks and while GPT thinks. Show a soft cyan wave then, so an open chat is
-# visibly listening. Style "off" keeps the ring dark.
-listen=${ALISA_LISTEN_LED:-1}
-[ "${ALISA_LED_STYLE:-}" != off ] || listen=0
+# speaks and while GPT thinks. A soft cyan wave is an explicit preference;
+# the small flag is re-read so the CLI can change it without restarting audio.
+listen=${ALISA_LISTEN_LED:-0}
+listen_file=${ALISA_LISTEN_LED_FILE-/data/opt/alisa-standalone/listen-led}
+listening_enabled() {
+    task_led_listen=$listen
+    if [ -n "$listen_file" ] && [ -r "$listen_file" ]; then
+        IFS= read -r task_led_listen < "$listen_file" || return 1
+    else
+        [ "${ALISA_LED_STYLE:-}" != off ] || return 1
+    fi
+    [ "$task_led_listen" = 1 ]
+}
 tick=0
 listening_frame() {
     tick=$(( (tick + 1) % 16 ))
@@ -150,7 +159,7 @@ while IFS= read -r -t 2 task_led_command; do
     case "$task_led_command" in
         B) task_led_requested=$blue ;;
         F\ *) decode_frame "${task_led_command#F }" || continue
-              if [ "$listen" = 1 ] && [ "$task_led_decoded" = ' 0 0 0 0 0 0 0 0 0' ]; then
+              if [ "$task_led_decoded" = ' 0 0 0 0 0 0 0 0 0' ] && listening_enabled; then
                   listening_frame
               fi
               task_led_requested=$task_led_decoded ;;

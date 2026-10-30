@@ -53,12 +53,16 @@ def native_environment(config):
         lines+=['export ALISA_VPN_REQUIRED=1','export ALISA_PROXY_URL=socks5h://127.0.0.1:18081','export ALISA_ICE_BIND_ADDRESS=172.31.254.1','export LD_PRELOAD='+TOOLS+'/mark.so']
     return ('\n'.join(lines)+'\n').encode()
 
+def listening_preference(config):
+    return b'1\n' if config.get('listen_led',False) and config['led']!='off' else b'0\n'
+
 def apply_settings(config):
     s=Station(config);mode=config['mode'];base=NATIVE if mode=='native' else '/data/opt/alice-voice'
     s.put(base+'/commands.txt',command_file(config['phrases']))
     if mode=='native':
         vpn=config['vpn'].get('enabled',False)
         s.put(NATIVE+'/runtime.env',native_environment(config))
+        s.put(NATIVE+'/listen-led',listening_preference(config))
         if vpn:
             s.run(TOOLS+'/vpn.sh guard')
             s.put(TOOLS+'/vpn-required',b'required\n')
@@ -68,7 +72,8 @@ def apply_settings(config):
 def update_preferences(config,previous):
     """Apply only changed preferences; never restart audio or a conversation."""
     phrases=config['phrases']!=previous['phrases'];led=config['led']!=previous['led']
-    if not config.get('installed') or not (phrases or led):return
+    listening=config.get('listen_led',False)!=previous.get('listen_led',False)
+    if not config.get('installed') or not (phrases or led or listening):return
     native=config['mode']=='native';station=Station(config)
     current=status(config) if native and led else {}
     live=bool(current.get('pid') or current.get('agent_connected'))
@@ -77,6 +82,7 @@ def update_preferences(config,previous):
     base=NATIVE if native else '/data/opt/alice-voice'
     try:
         if phrases:station.put(base+'/commands.txt',command_file(config['phrases']))
+        if native and (led or listening):station.put(NATIVE+'/listen-led',listening_preference(config))
         if led and native:
             station.put(NATIVE+'/runtime.env',native_environment(config))
             if live:native_action(config,'led',config['led'])
@@ -84,6 +90,8 @@ def update_preferences(config,previous):
     except BaseException:
         # Restore this small preference transaction without restarting audio.
         import contextlib
+        with contextlib.suppress(Exception):
+            if native and (led or listening):station.put(NATIVE+'/listen-led',listening_preference(previous))
         with contextlib.suppress(Exception):
             if phrases:station.put(base+'/commands.txt',command_file(previous['phrases']))
         with contextlib.suppress(Exception):

@@ -21,7 +21,9 @@ def entries(mode,page,config=None):
         values.append(('Установка и обслуживание','@service'))
     elif page=='settings':
         values=[('Голосовые фразы',('settings','phrases')),('Подсветка',('settings','led'))]
-        if mode=='native':values.append(('Голос GPT',('voice',None)))
+        if mode=='native':
+            values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
+            values.append(('Голос GPT',('voice',None)))
         values+=auto_entries(mode,config)
     elif page=='account':values=[('Войти',('login',None)),('Сменить аккаунт',('login','change')),('Выйти из аккаунта',('logout',None))]
     elif page=='vpn':values=[('Запустить VPN',('vpn','start')),('Остановить VPN',('vpn','stop')),
@@ -49,7 +51,7 @@ def run(mode,execute,start_page='main'):
         old=previous.get(page)
         if isinstance(old,tuple) and old not in [value for _,value in values]:
             candidates=[value for _,value in values if isinstance(value,tuple) and value[0]==old[0] and
-                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')) or (old[0]=='update' and value[1] in ('ask-on','ask-off')))]
+                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')) or (old[0]=='update' and value[1] in ('ask-on','ask-off')) or (old[0]=='settings' and value[1] in ('listen-on','listen-off')))]
             if candidates:previous[page]=candidates[0]
         endpoint=(configuration.get('host') or 'IP ещё не указан')+':'+str(configuration.get('port') or 2222)
         subtitle=endpoint+'  ·  '+('Установлен' if configuration.get('installed') else 'Требуется установка')
@@ -57,7 +59,7 @@ def run(mode,execute,start_page='main'):
     def inline(choice):
         if isinstance(choice,str):return True
         action,operation=choice
-        return action in ('toggle','help','doctor','network','storage','status','start','stop','verify') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off')) or (action=='update' and operation in ('ask-on','ask-off'))
+        return action in ('toggle','help','doctor','network','storage','status','start','stop','verify') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off')) or (action=='update' and operation in ('ask-on','ask-off')) or (action=='settings' and operation in ('listen-on','listen-off'))
     def location(context):return next(key for key,value in titles.items() if value==context)
     def read_request(context,choice):
         if choice=='back':return None
@@ -104,6 +106,7 @@ def run(mode,execute,start_page='main'):
         if choice=='@settings':return ui.FocusContent(phrase_summary()+'\n\nПодсветка: '+led_name()+'\n\n'+auto_summary())
         if choice==('settings','phrases'):return ui.FocusContent(phrase_summary())
         if choice==('settings','led'):return ui.FocusContent('Подсветка: '+led_name())
+        if choice in (('settings','listen-on'),('settings','listen-off')):return ui.FocusContent('В паузах GPT: '+('включена' if configuration.get('listen_led',False) else 'выключена')+'\n\nГолубая волна, пока чат GPT открыт и ответ не звучит. По умолчанию выключена. Меняется без перезапуска разговора; анимация ответа сохраняется. При цвете «Выключена» вся подсветка GPT остаётся погашенной.')
         if isinstance(choice,tuple) and (choice[0]=='autostart' or (choice[0]=='vpn' and str(choice[1]).startswith('autostart-'))):return ui.FocusContent(auto_summary())
         if choice==('uninstall',None):return ui.FocusContent('Программные файлы будут удалены после подтверждения. SSH, аккаунт и чаты сохранятся.')
         if choice==('verify',None):return ui.FocusContent('Короткий голосовой ответ прозвучит на колонке.')

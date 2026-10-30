@@ -27,7 +27,9 @@ class LivePreferences(unittest.TestCase):
   with patch.object(runtime,'Station') as station,patch.object(runtime,'status',return_value={'agent_connected':True,'phase':'active','led_style':'rainbow'}),patch.object(runtime,'native_action') as action,patch.object(runtime,'start') as start,patch.object(runtime,'stop') as stop:
    runtime.update_preferences(c,old)
   action.assert_called_once_with(c,'led','red');start.assert_not_called();stop.assert_not_called()
-  station.return_value.put.assert_called_once_with(runtime.NATIVE+'/runtime.env',runtime.native_environment(c))
+  self.assertEqual(station.return_value.put.call_count,2)
+  self.assertEqual(dict(call.args for call in station.return_value.put.call_args_list),{
+   runtime.NATIVE+'/runtime.env':runtime.native_environment(c),runtime.NATIVE+'/listen-led':b'0\n'})
   station.return_value.run.assert_not_called()
 
  def test_bridge_led_does_not_connect_over_ssh_or_close_browser(self):
@@ -57,3 +59,25 @@ class LivePreferences(unittest.TestCase):
   with patch.object(runtime,'Station') as station,patch.object(runtime,'status',return_value={'agent_connected':True}),patch.object(runtime,'stop') as stop:
    with self.assertRaisesRegex(RuntimeError,'обновите нативный клиент'):runtime.update_preferences(c,old)
   station.return_value.put.assert_not_called();stop.assert_not_called()
+
+ def test_listening_toggle_only_writes_its_flag_without_querying_or_restarting_audio(self):
+  c=config();old=copy.deepcopy(c);c['listen_led']=True
+  with patch.object(runtime,'Station') as station,patch.object(runtime,'status') as status,patch.object(runtime,'start') as start,patch.object(runtime,'stop') as stop,patch.object(runtime,'native_action') as action:
+   runtime.update_preferences(c,old)
+  station.return_value.put.assert_called_once_with(runtime.NATIVE+'/listen-led',b'1\n')
+  status.assert_not_called();start.assert_not_called();stop.assert_not_called();action.assert_not_called()
+
+ def test_complete_led_off_also_disables_listening_wave_without_losing_preference(self):
+  c=config();c.update(listen_led=True,led='off')
+  self.assertEqual(runtime.listening_preference(c),b'0\n')
+  c['led']='rainbow';self.assertEqual(runtime.listening_preference(c),b'1\n')
+
+ def test_old_configuration_defaults_to_dark_pauses_and_menu_toggle_saves(self):
+  from alisa_cli import menus
+  c=config();c.pop('listen_led',None)
+  with tempfile.TemporaryDirectory() as folder,patch.object(state,'HOME',Path(folder)):
+   state.save(c);loaded=state.load('native');self.assertFalse(loaded['listen_led'])
+   self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),menus.entries('native','settings',loaded))
+  with patch.object(cli,'load',return_value=c),patch.object(runtime,'update_preferences') as apply,patch.object(cli,'save') as save:
+   self.assertEqual(cli.main(['native','settings','listen-on']),0)
+  self.assertTrue(c['listen_led']);save.assert_called_once_with(c);apply.assert_called_once()
