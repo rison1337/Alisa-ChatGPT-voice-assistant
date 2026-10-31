@@ -63,6 +63,10 @@ class Models(unittest.TestCase):
   r=self.check('native',output('yandex,station-midi',*PINNED))
   self.assertEqual(r['model'],'yandexmidi');self.assertTrue(r['firmware_abi_supported'])
   self.assertEqual(r['warnings'],[]);self.assertTrue(r['ok'])
+ def test_yandexmidi_bridge_is_rejected_before_installation(self):
+  r=self.check('bridge',output('yandex,station-midi',*PINNED,tools=('aplay','base64','sha256sum','socat')))
+  self.assertFalse(r['mode_supported']);self.assertFalse(r['ok'])
+  with self.assertRaisesRegex(RuntimeError,'мост доступен для Лайт 2'):doctor.require(state.defaults('bridge'),r)
  def test_station_midi_synonyms_are_recognized(self):
   for compatible in ('yandexmidi','station-midi'):
    r=self.check('native',output(compatible,*LITE1))

@@ -2,6 +2,7 @@
 import time
 from .state import load,STYLE_NAMES
 from . import ui
+from .firmware import supports_lighting,LIGHTING_UNAVAILABLE,MODEL_NAMES
 
 TITLES={'main':'Нативный режим','settings':'Настройки','account':'Аккаунт ChatGPT',
         'vpn':'VPN / VLESS','service':'Установка и обслуживание','checks':'Проверки','autostart':'Автозапуск','updates':'Обновления'}
@@ -20,9 +21,10 @@ def entries(mode,page,config=None):
         if mode=='native':values.append(('VPN / VLESS','@vpn'))
         values.append(('Установка и обслуживание','@service'))
     elif page=='settings':
-        values=[('Голосовые фразы',('settings','phrases')),('Подсветка',('settings','led'))]
+        values=[('Голосовые фразы',('settings','phrases'))]
+        if supports_lighting(config.get('model')):values.append(('Подсветка',('settings','led')))
         if mode=='native':
-            values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
+            if supports_lighting(config.get('model')):values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
             values.append(('Голос GPT',('voice',None)))
         values+=auto_entries(mode,config)
     elif page=='account':values=[('Войти',('login',None)),('Сменить аккаунт',('login','change')),('Выйти из аккаунта',('logout',None))]
@@ -55,6 +57,7 @@ def run(mode,execute,start_page='main'):
             if candidates:previous[page]=candidates[0]
         endpoint=(configuration.get('host') or 'IP ещё не указан')+':'+str(configuration.get('port') or 2222)
         subtitle=endpoint+'  ·  '+('Установлен' if configuration.get('installed') else 'Требуется установка')
+        if configuration.get('model') in MODEL_NAMES:subtitle+='  ·  '+MODEL_NAMES[configuration['model']]
         return dict(title=titles[page],items=values,default=previous.get(page),details=results.get(page,''),subtitle=subtitle)
     def inline(choice):
         if isinstance(choice,str):return True
@@ -70,6 +73,7 @@ def run(mode,execute,start_page='main'):
     def ttl(request):return 5 if request[0] in ('status','vpn') else 60 if request[0]=='network' else 30
     def phrase_summary():return '\n'.join('Алиса, '+text for text in configuration['phrases'].values())
     def led_name():
+        if not supports_lighting(configuration.get('model')):return LIGHTING_UNAVAILABLE
         style=configuration['led']
         return ('Пульсация: '+STYLE_NAMES[style[6:]].lower()) if style.startswith('pulse-') else STYLE_NAMES[style]
     def auto_summary():

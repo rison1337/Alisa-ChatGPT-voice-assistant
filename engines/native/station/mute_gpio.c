@@ -21,6 +21,8 @@ extern long write(int, const void *, size_t);
 extern int close(int);
 extern int unlink(const char *);
 extern void *fdopen(int, const char *);
+extern int mkstemp(char *);
+extern int *__errno_location(void);
 
 typedef void *(*fopen_fn)(const char *, const char *);
 typedef int (*open_fn)(const char *, int, unsigned int);
@@ -37,82 +39,115 @@ static const char *source(void) {
     return path && path[0] ? path : "/sys/kernel/debug/gpio";
 }
 
-static int contains(const char *text, const char *needle) {
-    if (!text || !needle) return 0;
-    for (; *text; ++text) {
-        const char *a = text, *b = needle;
-        while (*a && *b && *a == *b) { ++a; ++b; }
-        if (!*b) return 1;
-    }
-    return 0;
-}
-
-/* Active-low mute lines: a trailing "hi" means the microphone is muted. */
-static int hardware_muted(const char *listing) {
-    const char *line = listing;
-    int muted = 0;
-    while (*line) {
-        const char *end = line;
-        while (*end && *end != '\n') ++end;
-        const char *name = line;
-        int named = 0;
-        while (name + 10 <= end) {
-            if ((name[0] == 'M' && name[1] == 'U' && name[2] == 'T' && name[3] == 'E' &&
-                 name[4] == '_' && name[5] == 'S') &&
-                (name[6] == 'W' || name[6] == 'T')) { named = 1; break; }
-            ++name;
-        }
-        if (named) {
-            const char *tail = end;
-            while (tail > line && (tail[-1] == ' ' || tail[-1] == '\t')) --tail;
-            if (tail - line >= 2 && tail[-2] == 'h' && tail[-1] == 'i') muted = 1;
-        }
-        line = *end ? end + 1 : end;
-    }
-    return muted;
-}
-
 static unsigned int length_of(const char *text) {
     unsigned int n = 0;
     while (text[n]) ++n;
     return n;
 }
 
-/* Serve the converted listing through a short-lived temp file so the client
- * re-reads the live switch state on each of its periodic opens. Returns -1
- * when the listing already speaks the client's format (Lite 1/2): pass the
- * original open through untouched. */
+static int space(char c) { return c == ' ' || c == '\t' || c == '\r'; }
+
+/* Exact consumer labels only; GPIO flags can follow the hi/lo token. */
+static const char *label_end(const char *line, const char *label) {
+    for (; *line; ++line) {
+        if (*line != '|') continue;
+        const char *p = line + 1, *name = label;
+        while (*p && *p == *name) { ++p; ++name; }
+        if (!*name && (space(*p) || *p == ')')) return p;
+    }
+    return 0;
+}
+
+/* 0: unrelated, 1: enabled, 2: muted, 3: native format, -1: unknown. */
+static int line_state(const char *line) {
+    if (label_end(line, "mute-switch")) return 3;
+    const char *p = label_end(line, "MUTE_SWITCH");
+    if (!p) p = label_end(line, "MUTE_STATE");
+    if (!p) return 0;
+    while (*p && *p != ')') ++p;
+    if (!*p) return -1;
+    ++p;
+    int state = 0;
+    while (*p) {
+        while (space(*p)) ++p;
+        const char *word = p;
+        while (*p && !space(*p)) ++p;
+        if (p - word == 2) {
+            int value = word[0] == 'h' && word[1] == 'i' ? 2 :
+                        word[0] == 'l' && word[1] == 'o' ? 1 : 0;
+            if (value && state && value != state) return -1;
+            if (value) state = value;
+        }
+    }
+    return state ? state : -1;
+}
+
+static int write_all(int fd, const char *text) {
+    size_t left = length_of(text);
+    while (left) {
+        long n = write(fd, text, left);
+        if (n < 0 && *__errno_location() == 4) continue; /* EINTR */
+        if (n <= 0) return 0;
+        text += n; left -= (size_t)n;
+    }
+    return 1;
+}
+
+/* Re-read the live switch on each open. Stream the entire GPIO listing with
+ * bounded memory; missing, unreadable, malformed or oversized input stays
+ * muted. Each caller owns an unlinked file, so concurrent reads cannot race. */
 static int converted_gpio(void) {
     open_fn original_open = (open_fn)next("open");
-    char listing[2048];
-    long used = 0;
-    int muted = 0;
+    char chunk[512], line[512];
+    size_t used = 0, total = 0;
+    int states = 0, invalid = 0, overflow = 0, legacy = 0;
     int fd = original_open(source(), 0, 0);
     if (fd >= 0) {
-        while (used < (long)sizeof(listing) - 1) {
-            long n = read(fd, listing + used, sizeof(listing) - 1 - used);
-            if (n <= 0) break;
-            used += n;
+        for (;;) {
+            long n = read(fd, chunk, sizeof(chunk));
+            if (n < 0 && *__errno_location() == 4) continue;
+            if (n < 0) { invalid = 1; break; }
+            if (!n) break;
+            total += (size_t)n;
+            if (total > 131072) { invalid = 1; break; }
+            for (long i = 0; i < n; ++i) {
+                if (chunk[i] == '\n') {
+                    line[used] = 0;
+                    int state = overflow ? -1 : line_state(line);
+                    if (state == 3) legacy = 1;
+                    else if (state < 0) invalid = 1;
+                    else states |= state;
+                    used = 0; overflow = 0;
+                } else if (chunk[i] == 0) invalid = 1;
+                else if (used < sizeof(line) - 1) line[used++] = chunk[i];
+                else overflow = 1;
+            }
         }
         close(fd);
-        listing[used] = 0;
-        if (contains(listing, "|mute-switch ")) return -1;
-        muted = hardware_muted(listing);
-    }
-    const char *state = muted ? "lo" : "hi";
-    const char *head = " gpio-0 (                    |mute-switch               ) in  ";
-    const char *tail = "    \n";
-    const char *tmp = "/tmp/alisa-mute-gpio-auto";
-    fd = original_open(tmp, 0100 | 01000 | 01, 0600); /* O_WRONLY|O_CREAT|O_TRUNC */
-    if (fd >= 0) {
-        write(fd, head, length_of(head));
-        write(fd, state, 2);
-        write(fd, tail, length_of(tail));
-        close(fd);
-    }
-    fd = original_open(tmp, 0, 0);
+        if (used || overflow) {
+            line[used] = 0;
+            int state = overflow ? -1 : line_state(line);
+            if (state == 3) legacy = 1;
+            else if (state < 0) invalid = 1;
+            else states |= state;
+        }
+        if (legacy) return -1; /* Preserve Lite 2's original listing. */
+    } else invalid = 1;
+    char tmp[] = "/tmp/alisa-mute-gpio-XXXXXX";
+    fd = mkstemp(tmp);
+    if (fd < 0) return -1;
+    const char *listing = !invalid && states == 1 ?
+        " gpio-0 ( |mute-switch ) in  hi\n" : " gpio-0 ( |mute-switch ) in  lo\n";
+    int reader = write_all(fd, listing) ? original_open(tmp, 02000000, 0) : -1;
     unlink(tmp);
-    return fd;
+    close(fd);
+    return reader; /* Read-only, close-on-exec, independent file offset. */
+}
+
+static void *converted_stream(int fd) {
+    void *stream = fdopen(fd, "r");
+    if (!stream) close(fd);
+    return stream;
 }
 
 static const char *redirect(const char *path, int read_only) {
@@ -149,7 +184,7 @@ void *fopen(const char *path, const char *mode) {
     int read_only = read_mode(mode);
     if (auto_convert(path, read_only)) {
         int fd = converted_gpio();
-        if (fd >= 0) return fdopen(fd, "r");
+        if (fd >= 0) return converted_stream(fd);
     }
     return original(redirect(path, read_only), mode);
 }
@@ -160,7 +195,7 @@ void *fopen64(const char *path, const char *mode) {
     int read_only = read_mode(mode);
     if (auto_convert(path, read_only)) {
         int fd = converted_gpio();
-        if (fd >= 0) return fdopen(fd, "r");
+        if (fd >= 0) return converted_stream(fd);
     }
     return original(redirect(path, read_only), mode);
 }

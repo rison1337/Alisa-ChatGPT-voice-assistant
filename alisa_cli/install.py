@@ -35,6 +35,9 @@ def native_files(station,model=None):
 
 def install(config,activate=True,dry_run=False):
     with ui.activity('Проверяю колонку и компоненты'):preflight=require(config)
+    if not dry_run:
+        from .firmware import apply_model
+        apply_model(config,preflight.get('model'))
     s=Station(config)
     from . import storage
     if config['mode']=='bridge':

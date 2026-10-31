@@ -19,8 +19,21 @@ BUILDS={
                     'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')]),
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
+MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','yandexmidi':'Станция 2'}
+LIGHTING_UNAVAILABLE='Подсветка GPT на Станции 2 пока не поддерживается. Штатная подсветка остаётся под управлением Алисы.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
          'но работа микрофона, звука и голосовых команд не гарантируется.')
+
+
+def supports_lighting(model):
+    return model!='yandexmidi'
+
+
+def apply_model(config,model):
+    if model not in BUILDS:return
+    config['model']=model
+    if not supports_lighting(model):
+        config['led']='off';config['listen_led']=False
 
 
 def classify(device_tree,pair):
