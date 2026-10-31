@@ -35,7 +35,7 @@ def check_firmware(host):
     return report
 
 
-def profiles(launch,quasar):
+def profiles(launch,quasar,model=None):
     launch=copy.deepcopy(launch);quasar=copy.deepcopy(quasar);counts={'--platformd':0,'--mediad':0}
     for node in launch['nodes']:
         for task in node['tasks']:
@@ -45,6 +45,9 @@ def profiles(launch,quasar):
                 if any(x.startswith('LD_PRELOAD=') for x in env):raise RuntimeError('Stock launcher already has a preload')
                 if kind=='--platformd':
                     extra=[f'LD_PRELOAD={BASE}/vqe_tap.so',f'ALICE_CAPTURE_SOCKET={RUNTIME}/microphone.sock']
+                    if model=='yandexmidi':
+                        # Whisper-level vqe_0 floats on Station 2; see vqe_tap.c.
+                        extra.append('ALICE_CAPTURE_GAIN=16')
                 else:
                     extra=[f'LD_PRELOAD={BASE}/tts_gate.so',f'ALICE_QUASAR_CONFIG={BASE}/quasar.speech.json',
                            f'ALSA_CONFIG_PATH={BASE}/tts-asound.conf',f'ALICE_TTS_GATE_FILE={RUNTIME}/tts.lease',

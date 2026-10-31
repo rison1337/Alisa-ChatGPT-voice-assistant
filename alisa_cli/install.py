@@ -14,7 +14,7 @@ def native_paths():
         paths.append(TOOLS+'/mark.so' if name=='mark.so' else NATIVE+'/'+name)
     return paths+[NATIVE+'/'+name for name in ['launch.bridge.json','quasar.speech.json','tts-asound.conf']]+[TOOLS+'/'+name for name in ['vpn.sh','boot.sh','native-call.sh']]
 
-def native_files(station):
+def native_files(station,model=None):
     folder=ROOT/'assets/native';manifest=json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
     files={}
     for name,digest in manifest['files'].items():
@@ -26,7 +26,7 @@ def native_files(station):
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     launch=json.loads(station.text('cat /system/vendor/quasar/launch.json'))
     quasar=json.loads(station.text('cat /system/vendor/quasar/quasar.cfg'))
-    launch,quasar=module.profiles(launch,quasar)
+    launch,quasar=module.profiles(launch,quasar,model)
     files[NATIVE+'/launch.bridge.json']=json.dumps(launch).encode()
     files[NATIVE+'/quasar.speech.json']=json.dumps(quasar).encode()
     files[NATIVE+'/tts-asound.conf']=b'</usr/share/alsa/alsa.conf>\npcm.alice_native_tts { type plug slave.pcm "default" }\n'
@@ -76,7 +76,7 @@ def install(config,activate=True,dry_run=False):
             else:os.environ['ALISA_SSH_CONFIG']=old_ssh
     else:
         with ui.activity('Сравниваю установленные файлы и проверяю место'):
-            files=native_files(s)
+            files=native_files(s,preflight.get('model'))
             space=storage.report(config,vpn_engine=None,files=files);storage.require(space)
         if dry_run:return {'dry_run':True,'mode':'native','preflight':preflight,'verified_files':len(files),'storage':space}
         sizes=storage.remote_sizes(s,files)
