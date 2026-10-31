@@ -5,6 +5,9 @@ from alisa_cli import doctor,state
 LITE1=('2dad0ffc61ba73d15ea813b754d7a56866d0477c321dcad9138b8d06e14ddbf1',
        'df67c7ad9fb9f2f9c473ba2aaed7663a0e898a2c6622993e65d3b8834a0b3646')
 
+PINNED=('9ad1476ee37df3e401a8426df7710f8f3d2d0695e01d0b949d99a5a8b562a4d2',
+       'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')
+
 def output(compatible,maind,vqe,tools=('aplay','base64','sha256sum')):
  return '\n'.join(['0','armv7l',compatible+'\x00amlogic, axg\x00',
   maind+'  /system/vendor/quasar/maind',vqe+'  /system/vendor/quasar/libs/libyandex_evil.so',
@@ -52,5 +55,17 @@ class Models(unittest.TestCase):
  def test_swapping_the_hash_paths_does_not_pass_the_build_check(self):
   r=self.check('native',output('yandex,prune',doctor.VQE,doctor.MAIND))
   self.assertFalse(r['firmware_abi_supported'])
+ def test_yandexmidi_is_recognized_and_installable_with_warning(self):
+  r=self.check('native',output('yandex,station-midi',doctor.MAIND,doctor.VQE))
+  self.assertEqual(r['model'],'yandexmidi');self.assertTrue(r['plum'])
+  self.assertFalse(r['firmware_abi_supported']);self.assertTrue(r['ok']);self.assertTrue(r['warnings'])
+ def test_yandexmidi_pinned_build_is_verified(self):
+  r=self.check('native',output('yandex,station-midi',*PINNED))
+  self.assertEqual(r['model'],'yandexmidi');self.assertTrue(r['firmware_abi_supported'])
+  self.assertEqual(r['warnings'],[]);self.assertTrue(r['ok'])
+ def test_station_midi_synonyms_are_recognized(self):
+  for compatible in ('yandexmidi','station-midi'):
+   r=self.check('native',output(compatible,*LITE1))
+   self.assertEqual(r['model'],'yandexmidi');self.assertTrue(r['ok'])
 
 if __name__=='__main__':unittest.main()

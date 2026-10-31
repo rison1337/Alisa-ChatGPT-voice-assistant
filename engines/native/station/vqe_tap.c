@@ -11,6 +11,7 @@ extern long sendto(int, const void *, size_t, int, const void *, unsigned int);
 extern long write(int, const void *, size_t);
 extern int *__errno_location(void);
 extern void _exit(int);
+extern double atof(const char *);
 
 struct unix_address { unsigned short family; char path[108]; };
 static void *(*next_output)(void *, unsigned int, unsigned int, const float **, size_t *);
@@ -39,6 +40,19 @@ static void initialize(void) {
     }
 }
 
+/* Optional per-model level correction read once from ALICE_CAPTURE_GAIN.
+ * Yandex Station 2 keeps whisper-level floats in the vqe buffer (~-51 dBFS
+ * speech) and needs ~16x; Lite 1/2 keep the default 1.0f. */
+static float capture_gain(void) {
+    static float gain = -1.0f;
+    if (gain <= 0.0f) {
+        const char *text = getenv("ALICE_CAPTURE_GAIN");
+        gain = (text && *text) ? (float)atof(text) : 1.0f;
+        if (gain <= 0.0f) gain = 1.0f;
+    }
+    return gain;
+}
+
 void *YandexVqeC_GetOutputChannelData(void *engine, unsigned int kind,
                                     unsigned int index, const float **data,
                                     size_t *frames) {
@@ -63,8 +77,9 @@ void *YandexVqeC_GetOutputChannelData(void *engine, unsigned int kind,
                 if (count > 160) count = 160;
                 for (size_t i = 0; i < count; ++i) {
                     float value = (*data)[offset + i];
-                    packet[i] = value != value ? 0 : value >= 1.0f ? 32767 :
-                                value <= -1.0f ? -32768 : (short)(value * 32768.0f);
+                    float scaled = value * (32768.0f * capture_gain());
+                    packet[i] = scaled != scaled ? 0 : scaled >= 32767.0f ? 32767 :
+                                scaled <= -32768.0f ? -32768 : (short)scaled;
                 }
                 sendto(tap_socket, packet, count * sizeof(short), 0x40 | 0x4000,
                        &address, address_length);
