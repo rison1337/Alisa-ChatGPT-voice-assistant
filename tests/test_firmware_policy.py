@@ -50,8 +50,9 @@ class FirmwarePolicy(unittest.TestCase):
                 doctor.require(config,report,warn=False)
 
     def test_known_builds_have_no_warning(self):
-        for model,(_,pairs) in firmware.BUILDS.items():
-            report=firmware.classify(firmware.BUILDS[model][0][0],pairs[0])
+        for model,(markers,pairs) in firmware.BUILDS.items():
+            if not pairs:continue
+            report=firmware.classify(markers[0],pairs[0])
             self.assertEqual(report['firmware_status'],'verified');self.assertEqual(report['warnings'],[])
 
     def test_hard_failures_remain_blocking_even_for_unknown_build(self):
@@ -99,6 +100,22 @@ class FirmwarePolicy(unittest.TestCase):
         self.assertTrue(any(firmware.WARNING in text for text in messages))
         self.assertFalse(any('Совместимая прошивка: Нет' in text for text in messages))
 
+    def test_profiles_set_capture_gain_only_for_yandexmidi(self):
+        import importlib.util
+        path=Path(__file__).resolve().parents[1]/'engines/native/tools/deploy.py'
+        spec=importlib.util.spec_from_file_location('deploy_under_test',path)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        def launcher():
+            return {'nodes':[{'tasks':[{'arg':['--platformd'],'envs':[]},
+                                       {'arg':['--mediad'],'envs':[]}]}]}
+        for model,wanted in [('yandexmidi',True),(None,False),('lite2',False)]:
+            launch,_=module.profiles(launcher(),{'audioclient':{'controller':{'playbackParams':{
+                'OPUS_STREAM':{'gstPipeline':'{STREAM_PIPELINE}'},'PCM_STREAM':{'gstPipeline':'{STREAM_PIPELINE}'},
+                'common':{'gstProperties':{'STREAM_PIPELINE':'appsrc name=stream-src ! {SINK}'}}}}}},model)
+            envs=[e for task in launch['nodes'][0]['tasks'] for e in task.get('envs',[])]
+            has=any(e=='ALICE_CAPTURE_GAIN=16' for e in envs)
+            self.assertEqual(has,wanted,f'model={model}')
+
     def test_standalone_deployer_uses_the_same_policy(self):
         path=Path(__file__).resolve().parents[1]/'engines/native/tools/deploy.py'
         spec=importlib.util.spec_from_file_location('policy_deploy',path)
@@ -110,6 +127,18 @@ class FirmwarePolicy(unittest.TestCase):
         stderr=io.StringIO()
         with patch.object(module,'ssh',side_effect=ssh),contextlib.redirect_stderr(stderr):report=module.check_firmware('fixture')
         self.assertEqual(report['firmware_status'],'unverified');self.assertIn(firmware.WARNING,stderr.getvalue())
+
+    def test_yandexmidi_model_is_supported_with_unverified_firmware_warning(self):
+        config,report=self.report(model='yandex,station-midi')
+        self.assertEqual(report['model'],'yandexmidi')
+        self.assertTrue(report['plum']);self.assertTrue(report['ok'])
+        self.assertFalse(report['firmware_abi_supported'])
+        self.assertTrue(report['warnings'])
+
+    def test_yandexmidi_pinned_build_is_verified(self):
+        config,report=self.report(model='yandex,station-midi',pair=('9ad1476ee37df3e401a8426df7710f8f3d2d0695e01d0b949d99a5a8b562a4d2','e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af'))
+        self.assertEqual(report['firmware_status'],'verified')
+        self.assertTrue(report['firmware_abi_supported']);self.assertEqual(report['warnings'],[])
 
     @unittest.skipUnless(sys.platform=='linux','Linux audio bridge')
     def test_bridge_has_no_second_hash_allowlist_and_keeps_profile_checks(self):

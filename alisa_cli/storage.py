@@ -13,7 +13,7 @@ def size_text(value):
 def payload(config,station):
     if config['mode']=='native':
         from .install import native_files
-        return native_files(station)
+        return native_files(station,config.get('model'))
     base='/data/opt/alice-voice';folder=ROOT/'engines/bridge'
     names=['capture_tap.so','vqe_tap.so','playback_worker.so','packet_playback.so','libopus.so.0','opus-copyright','native_agent.so','tts_gate.so']
     files={base+'/'+name:(folder/'build'/name).read_bytes() for name in names}

@@ -59,13 +59,21 @@ case "${1:-}" in
         "$BASE/profile.sh" bridge
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
-            # Lite 1 has no hardware mute-switch GPIO; without one the client
-            # would silence the microphone. Software mute needs a device test.
-            if grep -Fq 'yandex,station-micro' /proc/device-tree/compatible &&
-               [ -r "$BASE/mute_gpio.so" ] && ! grep -q '|mute-switch ' /sys/kernel/debug/gpio 2>/dev/null; then
-                printf ' gpio-0 (                    |mute-switch         ) in  hi\n' > "$RUNTIME/mute-gpio"
-                export ALICE_MUTE_GPIO_FILE="$RUNTIME/mute-gpio"
-                export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }$BASE/mute_gpio.so"
+            # Stations whose debugfs listing lacks the client's "|mute-switch "
+            # line would otherwise silence the microphone. Lite 1 has no switch
+            # at all and gets a static always-on listing. Yandex Station 2
+            # (yandexmidi) labels it MUTE_SWITCH/MUTE_STATE with active-low
+            # polarity; mute_gpio.so converts that listing on each read so the
+            # physical mute switch keeps working.
+            if [ -r "$BASE/mute_gpio.so" ]; then
+                if tr '\000' '\n' < /proc/device-tree/compatible | grep -Eq '^(yandex,station-midi|yandexmidi|station-midi)$'; then
+                    export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }$BASE/mute_gpio.so"
+                elif grep -Fq 'yandex,station-micro' /proc/device-tree/compatible &&
+                     ! grep -q '|mute-switch ' /sys/kernel/debug/gpio 2>/dev/null; then
+                    printf ' gpio-0 (                    |mute-switch         ) in  hi\n' > "$RUNTIME/mute-gpio"
+                    export ALICE_MUTE_GPIO_FILE="$RUNTIME/mute-gpio"
+                    export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }$BASE/mute_gpio.so"
+                fi
             fi
             exec "$BASE/bin/alisa-standalone" serve "$BASE/state"
         ) &

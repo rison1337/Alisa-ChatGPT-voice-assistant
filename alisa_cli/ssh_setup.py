@@ -147,6 +147,7 @@ def form(config,ui,allow_saved=False):
     # A new endpoint must not silently inherit another column's key or pin file.
     if candidate['host']!=address or candidate['port']!=port:
         candidate['identity']=None
+        candidate.pop('model',None)
         candidate['installed']=False
         candidate['autostart']=False
         candidate['vpn']={**config['vpn'],'enabled':False,'required':False,'autostart':False}

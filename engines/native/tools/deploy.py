@@ -28,14 +28,14 @@ def check_firmware(host):
     pair=tuple(ssh(host,'sha256sum '+path).decode().split()[0] for path in
                ['/system/vendor/quasar/maind','/system/vendor/quasar/libs/libyandex_evil.so'])
     report=classify(compatible,pair)
-    if not report['model']:raise RuntimeError('Only Station Lite 1 and Lite 2 are supported')
+    if not report['model']:raise RuntimeError('Only Station Lite 1, Lite 2 and Station 2 are supported')
     if not report['firmware_files_present']:raise RuntimeError('Cannot read firmware components')
     if ssh(host,'uname -m').decode().strip() not in ARCHITECTURES:raise RuntimeError('Unsupported station architecture')
     for warning in report['warnings']:print(warning,file=sys.stderr)
     return report
 
 
-def profiles(launch,quasar):
+def profiles(launch,quasar,model=None):
     launch=copy.deepcopy(launch);quasar=copy.deepcopy(quasar);counts={'--platformd':0,'--mediad':0}
     for node in launch['nodes']:
         for task in node['tasks']:
@@ -45,6 +45,9 @@ def profiles(launch,quasar):
                 if any(x.startswith('LD_PRELOAD=') for x in env):raise RuntimeError('Stock launcher already has a preload')
                 if kind=='--platformd':
                     extra=[f'LD_PRELOAD={BASE}/vqe_tap.so',f'ALICE_CAPTURE_SOCKET={RUNTIME}/microphone.sock']
+                    if model=='yandexmidi':
+                        # Whisper-level vqe_0 floats on Station 2; see vqe_tap.c.
+                        extra.append('ALICE_CAPTURE_GAIN=16')
                 else:
                     extra=[f'LD_PRELOAD={BASE}/tts_gate.so',f'ALICE_QUASAR_CONFIG={BASE}/quasar.speech.json',
                            f'ALSA_CONFIG_PATH={BASE}/tts-asound.conf',f'ALICE_TTS_GATE_FILE={RUNTIME}/tts.lease',
@@ -67,10 +70,10 @@ def main():
     parser.add_argument('--binary',type=Path,default=ROOT/'build/client/alisa-standalone',
                         help='Validated ARM client binary (default: build/client/alisa-standalone)')
     args=parser.parse_args()
-    check_firmware(args.host)
+    report=check_firmware(args.host)
     launch=json.loads(ssh(args.host,'cat /system/vendor/quasar/launch.json'))
     quasar=json.loads(ssh(args.host,'cat /system/vendor/quasar/quasar.cfg'))
-    launch,quasar=profiles(launch,quasar)
+    launch,quasar=profiles(launch,quasar,report['model'])
     stream=io.BytesIO()
     with wave.open(stream,'wb') as f:f.setnchannels(1);f.setsampwidth(2);f.setframerate(16000);f.writeframes(bytes(16000*2*12))
     files={'launch.bridge.json':json.dumps(launch).encode(),'quasar.speech.json':json.dumps(quasar).encode(),
@@ -85,7 +88,7 @@ def main():
         'webrtc-spl-sqrt-LICENSE':'webrtc-neteq/common_audio/third_party/spl_sqrt_floor/LICENSE',
         'abseil-LICENSE':'abseil-cpp/LICENSE',
     }.items():files['licenses/'+name]=(ROOT/'research/upstream'/path).read_bytes()
-    for name in ['native_agent','vqe_tap','tts_gate']:files[name+'.so']=(ROOT/'build'/(name+'.so')).read_bytes()
+    for name in ['native_agent','vqe_tap','tts_gate','mute_gpio']:files[name+'.so']=(ROOT/'build'/(name+'.so')).read_bytes()
     for name in ['profile.sh','indicator.sh','run.sh']:files[name]=(ROOT/'station'/name).read_bytes()
     if args.include_login:files['state/web-session.json']=(ROOT/'state/web-session.json').read_bytes()
     ssh(args.host,f'umask 077; mkdir -p {BASE}/bin {BASE}/state {BASE}/licenses; chmod 700 {BASE} {BASE}/state')

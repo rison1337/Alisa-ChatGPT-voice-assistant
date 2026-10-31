@@ -63,6 +63,10 @@ class Preview:
                 except subprocess.TimeoutExpired:self.process.terminate();self.process.wait(timeout=4)
 
 def choose(config):
+    from .firmware import supports_lighting,LIGHTING_UNAVAILABLE
+    if not supports_lighting(config.get('model')):
+        ui.note(LIGHTING_UNAVAILABLE)
+        return 'off'
     if not ui.interactive():return ui.select('Подсветка',[(label(style),style) for style in STYLES],default=config['led'])
     demo=Preview(config);chosen=[]
     def accept(value):

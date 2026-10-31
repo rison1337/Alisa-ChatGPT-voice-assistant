@@ -2,6 +2,7 @@ import json,os,shlex,subprocess,sys,time
 from .state import HOME,ROOT,load,save,write_private,command_file
 from .ssh import Station,check_result
 from .errors import PublicError
+from .firmware import supports_lighting
 NATIVE='/data/opt/alisa-standalone'
 TOOLS='/data/opt/alisa-cli'
 
@@ -48,13 +49,14 @@ def status(config):
     return {'mode':'bridge',**result}
 
 def native_environment(config):
-    lines=['export ALISA_LED_STYLE='+shlex.quote(config['led'])]
+    style=config['led'] if supports_lighting(config.get('model')) else 'off'
+    lines=['export ALISA_LED_STYLE='+shlex.quote(style)]
     if config['vpn'].get('enabled',False):
         lines+=['export ALISA_VPN_REQUIRED=1','export ALISA_PROXY_URL=socks5h://127.0.0.1:18081','export ALISA_ICE_BIND_ADDRESS=172.31.254.1','export LD_PRELOAD='+TOOLS+'/mark.so']
     return ('\n'.join(lines)+'\n').encode()
 
 def listening_preference(config):
-    return b'1\n' if config.get('listen_led',False) and config['led']!='off' else b'0\n'
+    return b'1\n' if supports_lighting(config.get('model')) and config.get('listen_led',False) and config['led']!='off' else b'0\n'
 
 def apply_settings(config):
     s=Station(config);mode=config['mode'];base=NATIVE if mode=='native' else '/data/opt/alice-voice'

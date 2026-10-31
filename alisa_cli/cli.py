@@ -3,6 +3,7 @@ from .state import ROOT,MODES,STYLES,STYLE_NAMES,VOICES,load,save,validate
 from . import doctor,network,runtime,autostart,accounts,vpn
 from . import ui,ssh_setup
 from . import __version__,updates
+from .firmware import apply_model,supports_lighting,LIGHTING_UNAVAILABLE
 if sys.platform=='win32':MODES=('native',)
 
 NAMES={'native':'Нативный — обработка на колонке, ПК после установки не нужен',
@@ -168,7 +169,7 @@ def installation_options(config,network_result):
 
 def wizard(config):
     updating=config.get('installed',False)
-    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 1 или Лайт 2 с готовыми root и SSH. Мост — только Лайт 2.')
+    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 1, Лайт 2 или Станция 2 с готовыми root и SSH. Мост — только Лайт 2.')
     if updating:ui.note('Уже установлено. Мастер обновит программу и настройки; вход ChatGPT и чаты сохранятся.','cyan')
     ui.note('Мастер сам выполнит проверки, предложит нужные настройки и запустит установленный режим.')
     ui.step(3,'Подключение и проверка колонки')
@@ -195,6 +196,7 @@ def wizard(config):
             dependencies.install(config['mode'])
     report=doctor.inspect(config) if report['host_missing'] else report
     show(report);doctor.require(config,report=report,warn=False)
+    apply_model(config,report.get('model'))
     ui.step(4,'Доступность ChatGPT');network_result=network.check(config);show(network_result)
     ui.step(5,'Настройка режима')
     ui.note('Сохранённый вход будет использован повторно; при необходимости его можно обновить после установки.' if updating else 'Вход в ChatGPT будет выполнен после установки клиента.')
@@ -233,7 +235,7 @@ def main(argv=None):
         except ui.Back:return 0
         except (KeyboardInterrupt,EOFError):return 130
         except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as error:ui.note(str(error),'red');return 1
-    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1/2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1/2: нативный GPT. Мост — Лайт 2. Сначала выберите режим.')
+    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1, Лайт 2 и Станция 2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1, Лайт 2 и Станция 2: нативный GPT. Мост — Лайт 2. Сначала выберите режим.')
     parser.add_argument('--version',action='version',version=__version__)
     parser.add_argument('mode',nargs='?',choices=MODES)
     parser.add_argument('action',nargs='?',choices=['install','update','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
@@ -305,6 +307,8 @@ def main(argv=None):
                 if yes('Удалить программу выбранного режима?',False):show(uninstall.remove(config,value))
                 else:ui.note('Удаление отменено.')
         elif action=='settings':
+            if not supports_lighting(config.get('model')) and (args.operation=='listen-on' or (args.led and args.led!='off')):
+                raise ValueError(LIGHTING_UNAVAILABLE)
             if args.operation in ('listen-on','listen-off'):
                 if mode!='native':raise ValueError('Подсветка в паузах настраивается для нативного режима')
                 previous=copy.deepcopy(config);config['listen_led']=args.operation=='listen-on'

@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "model": "plum+micro",
+  "model": "plum+micro+yandexmidi",
   "architecture": "armhf",
   "audio_engine": "WebRTC NetEq",
   "revision": 5,
   "files": {
     "native_agent.so": "00395cfb8b5dbb81bda7911b0f8d35eca064509781cbe208e671078da9283fd4",
-    "vqe_tap.so": "7fff71a18f78aedb35085d0a38cf6ee84bf75538b8f0832337dacbe74048e73f",
+    "vqe_tap.so": "b897088cf000590e2c452d47896d18b0d9483b56d360078bfdaa960b609bd28e",
     "tts_gate.so": "3cf0263a73e934704e0ecc4c7a5a633610b284dbccffdd6db8cc14e5e9384d32",
-    "run.sh": "67ac222059034120992a9fb4b31ba20d1825951176ea47e0f1fe16840dc08a3d",
+    "run.sh": "4f198d78c7cec1f757f0a05c11de7715c1c2f3a9d69968bce63ad642344f0c30",
     "profile.sh": "796895d54657a9b60d82e547bebab5d8d5185aa5dea193fe9ff320035d86f77b",
     "indicator.sh": "efcea203640ea7ba09d5ae8235064ac600a4a8050f66e461ee5b0ee82a4a333d",
     "mark.so": "86388c995080d76b95965d6e926304be19025b1e7f253c7ecf4c1f2919497845",
@@ -29,6 +29,6 @@
     "licenses/openssl-LICENSE": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
     "licenses/opus-COPYING": "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551",
     "licenses/plog-LICENSE": "e4d01796524cbc13b1571a1f0914823c6a23b316ba039e7014f47a4eef7fd4c3",
-    "mute_gpio.so": "699a0bdd8b2bd48874251683e63568df9a2908f8f03d604c52a1133cf545dc82"
+    "mute_gpio.so": "128941f6a8c33db8be1f52ddcf19a59c668251b2be47e97690cd881095c480b9"
   }
 }
