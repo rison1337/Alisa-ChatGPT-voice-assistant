@@ -100,6 +100,22 @@ class FirmwarePolicy(unittest.TestCase):
         self.assertTrue(any(firmware.WARNING in text for text in messages))
         self.assertFalse(any('Совместимая прошивка: Нет' in text for text in messages))
 
+    def test_profiles_set_capture_gain_only_for_yandexmidi(self):
+        import importlib.util
+        path=Path(__file__).resolve().parents[1]/'engines/native/tools/deploy.py'
+        spec=importlib.util.spec_from_file_location('deploy_under_test',path)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        def launcher():
+            return {'nodes':[{'tasks':[{'arg':['--platformd'],'envs':[]},
+                                       {'arg':['--mediad'],'envs':[]}]}]}
+        for model,wanted in [('yandexmidi',True),(None,False),('lite2',False)]:
+            launch,_=module.profiles(launcher(),{'audioclient':{'controller':{'playbackParams':{
+                'OPUS_STREAM':{'gstPipeline':'{STREAM_PIPELINE}'},'PCM_STREAM':{'gstPipeline':'{STREAM_PIPELINE}'},
+                'common':{'gstProperties':{'STREAM_PIPELINE':'appsrc name=stream-src ! {SINK}'}}}}}},model)
+            envs=[e for task in launch['nodes'][0]['tasks'] for e in task.get('envs',[])]
+            has=any(e=='ALICE_CAPTURE_GAIN=16' for e in envs)
+            self.assertEqual(has,wanted,f'model={model}')
+
     def test_standalone_deployer_uses_the_same_policy(self):
         path=Path(__file__).resolve().parents[1]/'engines/native/tools/deploy.py'
         spec=importlib.util.spec_from_file_location('policy_deploy',path)
