@@ -20,20 +20,18 @@ BUILDS={
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
 MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','yandexmidi':'Станция 2'}
-LIGHTING_UNAVAILABLE='Подсветка GPT на Станции 2 пока не поддерживается. Штатная подсветка остаётся под управлением Алисы.'
+LIGHTING_UNAVAILABLE='Подсветка GPT недоступна для этой модели.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
          'но работа микрофона, звука и голосовых команд не гарантируется.')
 
 
 def supports_lighting(model):
-    return model!='yandexmidi'
+    return model is None or model in BUILDS
 
 
 def apply_model(config,model):
     if model not in BUILDS:return
     config['model']=model
-    if not supports_lighting(model):
-        config['led']='off';config['listen_led']=False
 
 
 def classify(device_tree,pair):

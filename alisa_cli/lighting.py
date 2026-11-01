@@ -1,5 +1,5 @@
 """Temporary LED demo over one SSH stream, with the firmware mute guard."""
-import colorsys,contextlib,math,shlex,subprocess,threading,time
+import base64,colorsys,contextlib,math,subprocess,threading,time
 from .state import ROOT,STYLES,STYLE_NAMES
 from .ssh import Station
 from . import ui,runtime
@@ -36,12 +36,25 @@ class Preview:
                             self.error='Сейчас идёт разговор GPT: демо не меняет его индикацию. Цвет можно выбрать и сохранить.'
                     if not self.error:
                         station=Station(self.config)
-                        station.run('test -d /sys/class/leds/plum:red:ring1 || test -d /sys/class/leds/micro:red:ring1',timeout=12)
-                        script=(ROOT/'assets/native/indicator.sh').read_text(encoding='utf-8')
-                        # The demo restores the actual pre-demo frame, while the
-                        # runtime normally restores idle darkness after a call.
-                        script=script.replace("saved=' 0 0 0 0 0 0 0 0 0'",'saved="$task_led_current"')
-                        self.process=station.open_input('ALISA_LISTEN_LED=0 ALISA_LISTEN_LED_FILE= sh -c '+shlex.quote(script))
+                        station.run('test -d /sys/class/leds/plum:red:ring1 || test -d /sys/class/leds/micro:red:ring1 || '
+                                    '{ test -c /dev/fb0 && test "$(cat /sys/class/graphics/fb0/virtual_size)" = 89,1 && '
+                                    'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 32; }',timeout=12)
+                        script=(ROOT/'assets/native/indicator.sh').read_bytes()
+                        # Dropbear rejects long exec requests (~8 KiB on Lite 2).
+                        # Send the source as one stdin line, then stream frames
+                        # through the same connection without losing pipe bytes.
+                        bootstrap='''set -eu
+umask 077
+task_led_demo=$(mktemp /tmp/alisa-led-demo-XXXXXX)
+trap 'rm -f "$task_led_demo"' EXIT
+trap 'exit 0' TERM INT HUP
+IFS= read -r task_led_demo_source
+printf '%s' "$task_led_demo_source" | base64 -d > "$task_led_demo"
+unset task_led_demo_source
+ALISA_LED_PREVIEW=1 ALISA_LISTEN_LED=0 ALISA_LISTEN_LED_FILE= sh "$task_led_demo"
+'''
+                        self.process=station.open_input(bootstrap)
+                        self.process.stdin.write(base64.b64encode(script)+b'\n');self.process.stdin.flush()
                         self.thread=threading.Thread(target=self.animate,daemon=True);self.thread.start()
                 except (RuntimeError,OSError,subprocess.SubprocessError):self.error='Демо недоступно: проверьте SSH. Выбор цвета доступен.'
             if self.process is not None and self.process.poll() is not None:self.error='Демо завершилось: проверьте SSH. Выбор цвета доступен.'
@@ -58,7 +71,8 @@ class Preview:
             if self.thread is not None:self.thread.join(timeout=1)
             if self.process is not None:
                 with contextlib.suppress(OSError,ValueError):
-                    self.process.stdin.write(b'0\n');self.process.stdin.flush();self.process.stdin.close()
+                    self.process.stdin.write(b'0\n');self.process.stdin.flush()
+                with contextlib.suppress(OSError,ValueError):self.process.stdin.close()
                 try:self.process.wait(timeout=4)
                 except subprocess.TimeoutExpired:self.process.terminate();self.process.wait(timeout=4)
 
