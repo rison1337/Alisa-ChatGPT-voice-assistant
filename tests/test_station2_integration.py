@@ -46,29 +46,28 @@ class Station2Integration(unittest.TestCase):
         self.assertTrue(result['dry_run']);self.assertEqual(value,before)
         station.return_value.put.assert_not_called();station.return_value.run.assert_not_called();save.assert_not_called()
 
-    def test_model_disables_custom_lighting_without_changing_voice_commands(self):
-        value=self.config();before=copy.deepcopy(value)
-        firmware.apply_model(value,'yandexmidi')
-        self.assertEqual(value['model'],'yandexmidi');self.assertEqual(value['led'],'off')
-        self.assertFalse(value['listen_led']);self.assertEqual(value['phrases'],before['phrases'])
-        entries=menus.entries('native','settings',value)
-        self.assertIn(('Голос GPT',('voice',None)),entries)
-        self.assertFalse(any('Подсветка' in label for label,_ in entries))
-        with patch.object(ui,'select') as select,patch.object(ui,'note') as note:
-            self.assertEqual(lighting.choose(value),'off')
-        select.assert_not_called();note.assert_called_once_with(firmware.LIGHTING_UNAVAILABLE)
-        # Older/manually edited profiles must not activate a Lite ring driver.
-        value.update(led='rainbow',listen_led=True)
-        self.assertIn(b'ALISA_LED_STYLE=off',runtime.native_environment(value))
-        self.assertEqual(runtime.listening_preference(value),b'0\n')
+    def test_station2_lighting_is_available_and_existing_preferences_are_preserved(self):
+        for style in ('rainbow','off','pulse-red'):
+            value=self.config();value['led']=style;before=copy.deepcopy(value)
+            firmware.apply_model(value,'yandexmidi')
+            self.assertEqual(value['model'],'yandexmidi');self.assertEqual(value['led'],style)
+            self.assertFalse(value['listen_led']);self.assertEqual(value['phrases'],before['phrases'])
+            entries=menus.entries('native','settings',value)
+            self.assertIn(('Подсветка',('settings','led')),entries)
+            self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),entries)
+            self.assertIn(('ALISA_LED_STYLE='+style).encode(),runtime.native_environment(value))
+            value['listen_led']=True
+            self.assertEqual(runtime.listening_preference(value),b'0\n' if style=='off' else b'1\n')
 
-    def test_cli_rejects_unsupported_lighting_before_contacting_station(self):
-        value=self.config();firmware.apply_model(value,'yandexmidi')
+    def test_cli_accepts_station2_colors_and_optional_listening(self):
         for args in (['native','settings','listen-on'],['native','settings','--led','red']):
+            value=self.config();firmware.apply_model(value,'yandexmidi')
             with self.subTest(args=args),patch.object(cli,'load',return_value=value),\
-                 patch.object(runtime,'update_preferences') as update,patch.object(ui,'note'):
-                self.assertEqual(cli.main(args),1)
-                update.assert_not_called()
+                 patch.object(runtime,'update_preferences') as update,patch.object(cli,'save'),patch.object(ui,'note'):
+                self.assertEqual(cli.main(args),0)
+                update.assert_called_once()
+            if args[-1]=='listen-on':self.assertTrue(value['listen_led'])
+            else:self.assertEqual(value['led'],'red')
 
     def test_other_models_keep_their_lighting_preferences(self):
         for model in ('lite1','lite2'):
