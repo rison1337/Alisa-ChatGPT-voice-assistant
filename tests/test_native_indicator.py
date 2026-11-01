@@ -5,6 +5,7 @@ import select
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,6 +86,69 @@ class NativeRing(unittest.TestCase):
                 self.assertIsNone(process.poll())
             finally:
                 process.stdin.close();process.wait(timeout=3);process.stdout.close();process.stderr.close()
+
+
+@unittest.skipUnless(sys.platform == 'linux', 'shell and framebuffer fixture')
+class Station2Panel(unittest.TestCase):
+    def launch(self, folder, gpio_line=' gpio-0 ( |mute-switch ) in hi\n', listen='0'):
+        root = Path(folder)
+        fb = root / 'fb0'
+        fb.write_bytes(b'')
+        gpio = root / 'gpio'
+        gpio.write_text(gpio_line)
+        env = {**os.environ, 'ALICE_PANEL_FB': str(fb), 'ALICE_MUTE_GPIO_STATUS': str(gpio),
+               'ALISA_LED_STYLE': 'red', 'ALISA_LISTEN_LED': listen, 'ALISA_LISTEN_LED_FILE': ''}
+        env.pop('ALICE_LED_ROOT', None)
+        process = subprocess.Popen(['bash', str(ROOT / 'assets/native/indicator.sh')],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, env=env)
+        return process, fb
+
+    @staticmethod
+    def snapshot(process, fb):
+        time.sleep(1)
+        return fb.read_bytes()
+
+    def test_zone_frame_maps_to_rgbw_pixels_with_pad(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, fb = self.launch(folder)
+            process.stdin.write(b'F 160 0 0 0 160 0 0 0 160\n')
+            process.stdin.flush()
+            frame = self.snapshot(process, fb)
+            self.assertEqual(len(frame), 356)
+            pixels = [frame[i:i + 4] for i in range(0, len(frame), 4)]
+            self.assertEqual(pixels[0], bytes((0, 0, 160, 0)))
+            self.assertEqual(pixels[33], bytes((160, 0, 0, 0)))
+            self.assertEqual(pixels[84], bytes((160, 0, 0, 0)))
+            self.assertEqual(pixels[88], bytes((0, 0, 0, 0)))
+            self.assertEqual(sum(1 for p in pixels if any(p)), 88)
+            process.stdin.write(b'0\n')
+            process.stdin.close()
+            process.wait(timeout=10)
+            self.assertIn(b'STOCK', process.stdout.read())
+            self.assertEqual(fb.read_bytes(), bytes(356))
+
+    def test_physical_mute_releases_panel_to_dark(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, fb = self.launch(folder, gpio_line=' gpio-0 ( |mute-switch ) in lo\n')
+            process.stdin.write(b'F 160 0 0 0 160 0 0 0 160\n')
+            process.stdin.flush()
+            time.sleep(1)
+            self.assertEqual(fb.read_bytes(), bytes(356))
+            process.stdin.close()
+            process.wait(timeout=10)
+            self.assertIn(b'STOCK', process.stdout.read())
+
+    def test_listening_wave_lights_the_panel_on_dark_frames(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, fb = self.launch(folder, listen='1')
+            process.stdin.write(b'F 0 0 0 0 0 0 0 0 0\n')
+            process.stdin.flush()
+            frame = self.snapshot(process, fb)
+            self.assertEqual(len(frame), 356)
+            self.assertTrue(any(frame))
+            process.stdin.close()
+            process.wait(timeout=10)
 
 
 if __name__ == '__main__':unittest.main()
