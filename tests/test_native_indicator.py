@@ -128,13 +128,15 @@ class Station2Panel(unittest.TestCase):
             self.assertIn(b'STOCK', process.stdout.read())
             self.assertEqual(fb.read_bytes(), bytes(356))
 
-    def test_physical_mute_releases_panel_to_dark(self):
+    def test_physical_mute_leaves_the_panel_untouched(self):
         with tempfile.TemporaryDirectory() as folder:
             process, fb = self.launch(folder, gpio_line=' gpio-0 ( |mute-switch ) in lo\n')
             process.stdin.write(b'F 160 0 0 0 160 0 0 0 160\n')
             process.stdin.flush()
             time.sleep(1)
-            self.assertEqual(fb.read_bytes(), bytes(356))
+            # Muted: the script must not touch the framebuffer at all, so the
+            # firmware keeps the panel (same contract as the ring backend).
+            self.assertEqual(fb.read_bytes(), b'')
             process.stdin.close()
             process.wait(timeout=10)
             self.assertIn(b'STOCK', process.stdout.read())
