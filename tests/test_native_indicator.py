@@ -139,7 +139,8 @@ class Station2Panel(unittest.TestCase):
             self.assertEqual(fb.read_bytes(), b'')
             process.stdin.close()
             process.wait(timeout=10)
-            self.assertIn(b'STOCK', process.stdout.read())
+            # The ring backend is also silent on stdout before ownership.
+            self.assertEqual(process.stdout.read(), b'')
 
     def test_listening_wave_lights_the_panel_on_dark_frames(self):
         with tempfile.TemporaryDirectory() as folder:
