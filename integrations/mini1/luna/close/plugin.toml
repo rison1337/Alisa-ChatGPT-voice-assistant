@@ -1,0 +1,12 @@
+id = "local-alisa-gpt-close"
+name = "Alisa GPT: закрыть чат"
+version = "1.0.0"
+entry = "main.lua"
+description = "Локально останавливает Alisa Voice по фразе «закрой чат»"
+permissions = ["commands", "exec"]
+
+[commands]
+phrases = ["закрой чат"]
+
+[launch]
+mode = "service"
