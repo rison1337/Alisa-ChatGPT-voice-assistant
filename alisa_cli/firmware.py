@@ -19,26 +19,30 @@ BUILDS={
                     'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')]),
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
-MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','yandexmidi':'Станция 2'}
+MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','yandexmidi':'Станция 2','mini1':'Станция Мини 1'}
 LIGHTING_UNAVAILABLE='Подсветка GPT недоступна для этой модели.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
          'но работа микрофона, звука и голосовых команд не гарантируется.')
 
 
 def supports_lighting(model):
-    return model is None or model in BUILDS
+    return model is None or model in BUILDS and model!='mini1'
 
 
 def apply_model(config,model):
-    if model not in BUILDS:return
+    if model not in BUILDS and model!='mini1':return
     config['model']=model
 
 
-def classify(device_tree,pair):
+def classify(device_tree,pair,device_type=None):
     tokens=set(re.split(r'[\x00\s]+',device_tree.lower()))
     model=next((name for name,(markers,_) in BUILDS.items() if tokens.intersection(markers)),None)
+    # Mini 1 shares a generic Amlogic device tree with other products.
+    # Require the firmware's explicit device type as a second identifier.
+    if model is None and device_type=='yandexmini' and {'amlogic,','axg'} <= tokens:
+        model='mini1'
     present=len(pair)==2 and all(isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) for value in pair)
-    known=bool(model and present and tuple(pair) in BUILDS[model][1])
+    known=bool(model in BUILDS and present and tuple(pair) in BUILDS[model][1])
     status='unsupported-model' if not model else 'verified' if known else 'unverified' if present else 'unavailable'
     return {'model':model,'firmware_abi_supported':known,'firmware_files_present':present,
             'firmware_status':status,'warnings':[WARNING] if status=='unverified' else []}

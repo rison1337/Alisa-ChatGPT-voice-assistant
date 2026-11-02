@@ -9,6 +9,13 @@ if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ] && [ -e /sys/class/
     LED=/sys/class/leds/micro
 fi
 case "$LED" in */micro) no_mute_switch=1 ;; esac
+# Mini 1 has no supported GPT LED backend; acknowledge without hardware writes.
+if [ "${ALISA_MINI1:-0}" = 1 ]; then
+    while IFS= read -r task_led_command; do
+        case "$task_led_command" in F\ *) printf 'FRAME\n' ;; B) printf 'BLUE\n' ;; esac
+    done
+    exit 0
+fi
 # Station 2 (yandexmidi) drives its 88-LED panel through a framebuffer
 # (/dev/fb0, 89x1 RGBW) instead of plum sysfs rings; render there instead.
 panel_mode=0

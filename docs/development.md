@@ -37,7 +37,7 @@ tar -xzf alisa-voice-sources.tar.gz --strip-components=1
 
 ## Нативный клиент ARMhf
 
-Нужны CMake 3.21+, Ninja, make, Perl, clang/lld, llvm-ar/llvm-ranlib и Zig 0.14.1. Сборка выполняется на Linux x86_64 для ARMhf/glibc 2.28; ядро колонки aarch64, но её userspace — 32-битный.
+Нужны CMake 3.21+, Ninja, make, Perl, clang/lld, llvm-ar/llvm-ranlib и Zig 0.14.1. Сборка выполняется на Linux x86_64 для ARMhf/glibc 2.23 (включая Мини 1); ядро колонки aarch64, но её userspace — 32-битный.
 
 Установите закреплённый Zig в папку проекта:
 
@@ -58,6 +58,7 @@ cmake -S engines/native -B engines/native/build/client -G Ninja \
 cmake --build engines/native/build/client --target alisa-standalone --parallel 4
 python3 engines/native/scripts/build_hooks.py
 python3 scripts/build_mark.py
+sh engines/native/scripts/build_mini1_volume.sh
 python3 scripts/package.py
 ```
 
