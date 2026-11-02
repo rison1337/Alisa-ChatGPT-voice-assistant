@@ -27,8 +27,11 @@ def check_firmware(host):
     compatible=ssh(host,'cat /proc/device-tree/compatible').decode(errors='replace')
     pair=tuple(ssh(host,'sha256sum '+path).decode().split()[0] for path in
                ['/system/vendor/quasar/maind','/system/vendor/quasar/libs/libyandex_evil.so'])
-    report=classify(compatible,pair)
-    if not report['model']:raise RuntimeError('Only Station Lite 1, Lite 2 and Station 2 are supported')
+    device_type_line=ssh(host,'grep -m1 deviceType /system/vendor/quasar/quasar.cfg').decode(errors='replace')
+    parts=device_type_line.split('"')
+    device_type=parts[3] if len(parts)>3 else None
+    report=classify(compatible,pair,device_type)
+    if not report['model']:raise RuntimeError('Unsupported Station model')
     if not report['firmware_files_present']:raise RuntimeError('Cannot read firmware components')
     if ssh(host,'uname -m').decode().strip() not in ARCHITECTURES:raise RuntimeError('Unsupported station architecture')
     for warning in report['warnings']:print(warning,file=sys.stderr)

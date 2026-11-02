@@ -16,6 +16,8 @@ def native_paths():
 
 def native_files(station,model=None):
     folder=ROOT/'assets/native';manifest=json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
+    if model=='mini1' and 'volume-libs/libasound.so.2' not in manifest['files']:
+        raise RuntimeError('Для Мини 1 нужен заново собранный пакет ARMhf/glibc 2.23 с адаптером громкости; штатные готовые assets не изменены этим source-only патчем.')
     files={}
     for name,digest in manifest['files'].items():
         if Path(name).is_absolute() or '..' in Path(name).parts:raise RuntimeError('Некорректный manifest')

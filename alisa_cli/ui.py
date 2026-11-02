@@ -325,7 +325,7 @@ def show(value):
         elif item is None:plain=display='не определено'
         elif key=='free_data_kib':label='Свободно на колонке';plain=display=f'{item/1024:.1f} МиБ'
         else:
-            plain=display={'native':'Нативный','bridge':'Мост','lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','yandexmidi':'Станция 2','verified':'Проверенная сборка','unverified':'Совместимость не проверена','unsupported-model':'Модель не поддерживается','unavailable':'Компоненты не прочитаны','idle':'Готов к командам','active':'Разговор GPT','stopped':'Остановлен','starting':'Запускается','opening':'Подключается'}.get(str(item),str(item))
+            plain=display={'native':'Нативный','bridge':'Мост','lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini1':'Станция Мини 1','yandexmidi':'Станция 2','verified':'Проверенная сборка','unverified':'Совместимость не проверена','unsupported-model':'Модель не поддерживается','unavailable':'Компоненты не прочитаны','idle':'Готов к командам','active':'Разговор GPT','stopped':'Остановлен','starting':'Запускается','opening':'Подключается'}.get(str(item),str(item))
         if messages is not None:messages.append(label+': '+plain)
         if not quiet:print('  '+color(label.ljust(29),'muted')+' '+display)
     if not quiet:print()
