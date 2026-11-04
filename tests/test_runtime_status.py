@@ -19,6 +19,12 @@ class NativeStatus(unittest.TestCase):
   self.assertEqual(result['phase'],'stopped');self.assertFalse(result['agent_connected'])
   self.assertNotIn('login_saved',result)
 
+ def test_missing_client_on_a_fresh_station_is_stopped_not_an_error(self):
+  c=state.defaults('native');c['host']='192.0.2.44'
+  response=subprocess.CompletedProcess([],127,stdout=b'',stderr=b"sh: can't execute /data/opt/alisa-standalone/bin/alisa-standalone: No such file or directory")
+  with patch.object(runtime.Station,'run',return_value=response):result=runtime.status(c)
+  self.assertEqual(result['phase'],'stopped');self.assertFalse(result['agent_connected'])
+
  def test_invalid_success_reply_does_not_allow_update(self):
   c=state.defaults('native');c['host']='192.0.2.44'
   for output in (b'',b'[]',b'{}',b'not JSON'):

@@ -23,6 +23,9 @@ def status(config):
     if config['mode']=='native':
         r=Station(config).run(NATIVE+'/bin/alisa-standalone status',check=False)
         if r.returncode==255:check_result(r)
+        # A fresh station has no client binary yet; report stopped so the
+        # installer can plan its first copy instead of failing on code 127.
+        if r.returncode==127:return {'mode':'native','phase':'stopped','agent_connected':False,'error':''}
         try:result=json.loads(r.stdout)
         except ValueError:
             check_result(r)
