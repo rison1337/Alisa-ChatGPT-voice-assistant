@@ -4,7 +4,8 @@ set -efu
 LED=${ALICE_LED_ROOT:-/sys/class/leds/plum}
 # Lite 1 (yandex,station-micro) has the same 3x3 ring under another name
 # and only a software microphone mute, so there is no switch to report.
-# Mini 2 (yandex,station-mini2) has a 6-zone ring and no mute switch either.
+# Mini 2 (yandex,station-mini2) has a 6-zone ring; its momentary mute button
+# is handled by maind before VQE, so there is no switch line to read here.
 no_mute_switch=0
 if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ]; then
     if [ -e /sys/class/leds/micro:red:ring1 ]; then

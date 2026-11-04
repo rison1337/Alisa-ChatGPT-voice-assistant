@@ -60,8 +60,9 @@ case "${1:-}" in
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
             # Stations whose debugfs listing lacks the client's "|mute-switch "
-            # line would otherwise silence the microphone. Lite 1 and Mini 2
-            # have no switch at all and get a static always-on listing.
+            # line would otherwise silence the microphone. Lite 1 has no switch
+            # at all and gets a static always-on listing; Mini 2 has a momentary
+            # button handled by maind before VQE and gets the same listing.
             # Yandex Station 2 (yandexmidi) labels it MUTE_SWITCH/MUTE_STATE
             # with active-low polarity; mute_gpio.so converts that listing on
             # each read so the physical mute switch keeps working.
