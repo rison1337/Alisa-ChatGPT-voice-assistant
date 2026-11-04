@@ -43,7 +43,7 @@ class FirmwarePolicy(unittest.TestCase):
                 note.assert_called_once_with(firmware.WARNING,'yellow')
 
     def test_unknown_lite1_and_lite2_bridge_builds_are_allowed_with_warning(self):
-        for model,mode in [('yandex,station-micro','native'),('yandex,prune','bridge')]:
+        for model,mode in [('yandex,station-micro','native'),('yandex,prune','bridge'),('yandex,station-mini2','bridge')]:
             with self.subTest(model=model,mode=mode):
                 config,report=self.report(model,mode)
                 self.assertTrue(report['ok']);self.assertTrue(report['warnings'])

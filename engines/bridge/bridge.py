@@ -93,7 +93,7 @@ def check_firmware(host: str) -> dict:
     pair=tuple(ssh(host,'sha256sum '+path).decode().split()[0] for path in
                ['/system/vendor/quasar/maind','/system/vendor/quasar/libs/libyandex_evil.so'])
     report=classify(compatible,pair)
-    if report['model']!='lite2':raise RuntimeError('The audio bridge supports only Station Lite 2')
+    if report['model'] not in ('lite2','mini2'):raise RuntimeError('The audio bridge supports only Station Lite 2 and Mini 2')
     if not report['firmware_files_present']:raise RuntimeError('Cannot read firmware components')
     if ssh(host,'uname -m').decode().strip() not in ARCHITECTURES:raise RuntimeError('Unsupported station architecture')
     for warning in report['warnings']:print(warning,file=sys.stderr)

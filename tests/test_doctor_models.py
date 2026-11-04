@@ -82,9 +82,8 @@ class Models(unittest.TestCase):
   r=self.check('native',output('yandex,station-mini2',*LITE1))
   self.assertEqual(r['model'],'mini2');self.assertFalse(r['firmware_abi_supported'])
   self.assertTrue(r['ok']);self.assertTrue(r['warnings'])
- def test_mini2_bridge_is_rejected(self):
+ def test_mini2_bridge_is_supported_with_socat(self):
   r=self.check('bridge',output('yandex,station-mini2',*MINI2,tools=('aplay','base64','sha256sum','socat')))
-  self.assertFalse(r['mode_supported']);self.assertFalse(r['ok'])
-  with self.assertRaisesRegex(RuntimeError,'мост доступен для Лайт 2'):doctor.require(state.defaults('bridge'),r)
+  self.assertEqual(r['model'],'mini2');self.assertTrue(r['mode_supported']);self.assertTrue(r['ok'])
 
 if __name__=='__main__':unittest.main()
