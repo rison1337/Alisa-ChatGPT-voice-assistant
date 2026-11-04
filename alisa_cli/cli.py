@@ -169,7 +169,7 @@ def installation_options(config,network_result):
 
 def wizard(config):
     updating=config.get('installed',False)
-    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 1, Лайт 2 или Станция 2 с готовыми root и SSH. Мост — только Лайт 2.')
+    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 1, Лайт 2, Мини 2 или Станция 2 с готовыми root и SSH. Мост — только Лайт 2.')
     if updating:ui.note('Уже установлено. Мастер обновит программу и настройки; вход ChatGPT и чаты сохранятся.','cyan')
     ui.note('Мастер сам выполнит проверки, предложит нужные настройки и запустит установленный режим.')
     ui.step(3,'Подключение и проверка колонки')
@@ -235,7 +235,7 @@ def main(argv=None):
         except ui.Back:return 0
         except (KeyboardInterrupt,EOFError):return 130
         except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as error:ui.note(str(error),'red');return 1
-    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1, Лайт 2 и Станция 2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1, Лайт 2 и Станция 2: нативный GPT. Мост — Лайт 2. Сначала выберите режим.')
+    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1, Лайт 2, Мини 2 и Станция 2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1, Лайт 2, Мини 2 и Станция 2: нативный GPT. Мост — Лайт 2. Сначала выберите режим.')
     parser.add_argument('--version',action='version',version=__version__)
     parser.add_argument('mode',nargs='?',choices=MODES)
     parser.add_argument('action',nargs='?',choices=['install','update','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])

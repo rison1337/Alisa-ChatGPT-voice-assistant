@@ -89,6 +89,77 @@ class NativeRing(unittest.TestCase):
                 process.stdin.close();process.wait(timeout=3);process.stdout.close();process.stderr.close()
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'shell and file-backed LED fixture')
+class Mini2Ring(unittest.TestCase):
+    def fixture(self, root, listen='0', style='off'):
+        prefix = root / 'mini2'
+        paths = []
+        for zone in range(1, 7):
+            for color in ('red', 'green', 'blue'):
+                path = root / f'mini2:{color}:ring{zone}'
+                path.mkdir()
+                (path / 'brightness').write_text('0\n')
+                (path / 'trigger').write_text('none [quasar]\n')
+                paths.append(path)
+        clock = root / 'mini2:white:clockA1'
+        clock.mkdir()
+        (clock / 'brightness').write_text('7\n')
+        (clock / 'trigger').write_text('[none] quasar\n')
+        gpio = root / 'gpio'
+        gpio.write_text('software mute; no switch\n')
+        env = {**os.environ, 'ALICE_LED_ROOT': str(prefix), 'ALICE_MUTE_GPIO_STATUS': str(gpio),
+               'ALISA_LED_STYLE': style, 'ALISA_LISTEN_LED': listen, 'ALISA_LISTEN_LED_FILE': ''}
+        process = subprocess.Popen(['bash', str(ROOT / 'assets/native/indicator.sh')],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, env=env)
+        return process, paths, clock
+
+    def frame(self, paths):
+        return [int((path / 'brightness').read_text()) for path in paths]
+
+    def send(self, process, command, expected='FRAME'):
+        process.stdin.write(command + '\n');process.stdin.flush()
+        self.assertTrue(select.select([process.stdout], [], [], 2)[0], 'LED script did not acknowledge frame')
+        self.assertEqual(process.stdout.readline().strip(), expected)
+
+    def finish(self, process):
+        process.stdin.close();process.wait(timeout=3)
+        error = process.stderr.read()
+        process.stdout.close();process.stderr.close()
+        self.assertEqual(process.returncode, 0, error)
+
+    def test_logical_zones_map_to_physical_pairs_and_clock_is_untouched(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, paths, clock = self.fixture(Path(folder))
+            try:
+                self.send(process, 'F 10 20 30 40 50 60 70 80 90')
+                self.assertEqual(self.frame(paths), [10, 20, 30, 10, 20, 30, 40, 50, 60,
+                                                     40, 50, 60, 70, 80, 90, 70, 80, 90])
+                self.send(process, 'F 0 0 0 0 0 0 0 0 0')
+                self.assertEqual(self.frame(paths), [0] * 18)
+                self.send(process, '0', 'STOCK')
+                self.assertEqual(self.frame(paths), [0] * 18)
+                self.assertTrue(all((path / 'trigger').read_text().strip() == 'quasar' for path in paths))
+            finally:
+                self.finish(process)
+            self.assertEqual((clock / 'brightness').read_text(), '7\n')
+            self.assertEqual((clock / 'trigger').read_text(), '[none] quasar\n')
+
+    def test_listening_wave_expands_to_pairs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, paths, clock = self.fixture(Path(folder), listen='1', style='rainbow')
+            try:
+                self.send(process, 'F 0 0 0 0 0 0 0 0 0')
+                wave = self.frame(paths)
+                self.assertGreater(sum(wave), 0)
+                for pair in range(3):
+                    self.assertEqual(wave[pair * 6:pair * 6 + 3], wave[pair * 6 + 3:pair * 6 + 6])
+                self.send(process, '0', 'STOCK')
+                self.assertEqual(self.frame(paths), [0] * 18)
+            finally:
+                self.finish(process)
+
+
 @unittest.skipUnless(sys.platform == 'linux', 'shell and framebuffer fixture')
 class Station2Panel(unittest.TestCase):
     @contextlib.contextmanager

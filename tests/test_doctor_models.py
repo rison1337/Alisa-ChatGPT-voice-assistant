@@ -8,6 +8,9 @@ LITE1=('2dad0ffc61ba73d15ea813b754d7a56866d0477c321dcad9138b8d06e14ddbf1',
 PINNED=('9ad1476ee37df3e401a8426df7710f8f3d2d0695e01d0b949d99a5a8b562a4d2',
        'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')
 
+MINI2=('7ff114e08d46d48394f9d794f89dc941f3b217bdcd3ff1ef46f1cd80fada6ec1',
+      'fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f')
+
 def output(compatible,maind,vqe,tools=('aplay','base64','sha256sum')):
  return '\n'.join(['0','armv7l',compatible+'\x00amlogic, axg\x00',
   maind+'  /system/vendor/quasar/maind',vqe+'  /system/vendor/quasar/libs/libyandex_evil.so',
@@ -71,5 +74,17 @@ class Models(unittest.TestCase):
   for compatible in ('yandexmidi','station-midi'):
    r=self.check('native',output(compatible,*LITE1))
    self.assertEqual(r['model'],'yandexmidi');self.assertTrue(r['ok'])
+ def test_mini2_pinned_build_is_verified(self):
+  r=self.check('native',output('yandex,station-mini2',*MINI2))
+  self.assertEqual(r['model'],'mini2');self.assertTrue(r['plum']);self.assertTrue(r['firmware_abi_supported'])
+  self.assertEqual(r['warnings'],[]);self.assertTrue(r['ok'])
+ def test_mini2_with_other_hashes_is_unverified_but_installable(self):
+  r=self.check('native',output('yandex,station-mini2',*LITE1))
+  self.assertEqual(r['model'],'mini2');self.assertFalse(r['firmware_abi_supported'])
+  self.assertTrue(r['ok']);self.assertTrue(r['warnings'])
+ def test_mini2_bridge_is_rejected(self):
+  r=self.check('bridge',output('yandex,station-mini2',*MINI2,tools=('aplay','base64','sha256sum','socat')))
+  self.assertFalse(r['mode_supported']);self.assertFalse(r['ok'])
+  with self.assertRaisesRegex(RuntimeError,'мост доступен для Лайт 2'):doctor.require(state.defaults('bridge'),r)
 
 if __name__=='__main__':unittest.main()

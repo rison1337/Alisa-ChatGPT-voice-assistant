@@ -37,6 +37,7 @@ class Preview:
                     if not self.error:
                         station=Station(self.config)
                         station.run('test -d /sys/class/leds/plum:red:ring1 || test -d /sys/class/leds/micro:red:ring1 || '
+                                    'test -d /sys/class/leds/mini2:red:ring1 || '
                                     '{ test -c /dev/fb0 && test "$(cat /sys/class/graphics/fb0/virtual_size)" = 89,1 && '
                                     'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 32; }',timeout=12)
                         script=(ROOT/'assets/native/indicator.sh').read_bytes()

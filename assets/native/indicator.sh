@@ -4,11 +4,26 @@ set -efu
 LED=${ALICE_LED_ROOT:-/sys/class/leds/plum}
 # Lite 1 (yandex,station-micro) has the same 3x3 ring under another name
 # and only a software microphone mute, so there is no switch to report.
+# Mini 2 (yandex,station-mini2) has a 6-zone ring and no mute switch either.
 no_mute_switch=0
-if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ] && [ -e /sys/class/leds/micro:red:ring1 ]; then
-    LED=/sys/class/leds/micro
+if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ]; then
+    if [ -e /sys/class/leds/micro:red:ring1 ]; then
+        LED=/sys/class/leds/micro
+    elif [ -e /sys/class/leds/mini2:red:ring1 ]; then
+        LED=/sys/class/leds/mini2
+    fi
 fi
-case "$LED" in */micro) no_mute_switch=1 ;; esac
+# Frames carry 3 logical zones; zone_map gives the logical zone of each
+# physical one. Mini 2 doubles every logical zone onto a physical pair; its
+# clock LEDs (mini2:white:clock*) are never touched.
+zones='1 2 3'
+zone_map='1 2 3'
+case "$LED" in
+    */micro) no_mute_switch=1 ;;
+    */mini2) no_mute_switch=1; zones='1 2 3 4 5 6'; zone_map='1 1 2 2 3 3' ;;
+esac
+dark_frame=''
+for task_led_zone in $zones; do dark_frame="$dark_frame 0 0 0"; done
 # Station 2 (yandexmidi) drives its 88-LED panel through a framebuffer
 # (/dev/fb0, 89x1 RGBW) instead of plum sysfs rings; render there instead.
 panel_mode=0
@@ -16,7 +31,7 @@ if [ -z "${ALICE_LED_ROOT:-}" ]; then
     if [ -n "${ALICE_PANEL_FB:-}" ]; then
         # Explicit framebuffer paths are also used by isolated device tests.
         panel_mode=1
-    elif [ ! -e "$LED:red:ring1" ] && [ ! -e /sys/class/leds/micro:red:ring1 ]; then
+    elif [ ! -e "$LED:red:ring1" ] && [ ! -e /sys/class/leds/micro:red:ring1 ] && [ ! -e /sys/class/leds/mini2:red:ring1 ]; then
         # Do not send RGBW bytes to another model's framebuffer (Lite 2 is 3x1).
         [ -c /dev/fb0 ] &&
         [ "$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)" = 89,1 ] &&
@@ -292,7 +307,7 @@ active_trigger() {
 }
 triggers() {
     task_led_triggers=''
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             active_trigger "$LED:$task_led_color:ring$task_led_zone"
             task_led_triggers="$task_led_triggers $task_led_trigger"
@@ -302,7 +317,7 @@ triggers() {
 detach_triggers() {
     # Keep native wake/listening animations out of the entire GPT session,
     # including silent frames. The physical mute switch is checked separately.
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             printf 'none\n' > "$LED:$task_led_color:ring$task_led_zone/trigger"
         done
@@ -310,7 +325,7 @@ detach_triggers() {
 }
 restore_triggers() {
     set -- $saved_triggers
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             task_led_path="$LED:$task_led_color:ring$task_led_zone"
             active_trigger "$task_led_path"
@@ -326,7 +341,7 @@ restore_triggers() {
 }
 frame() {
     task_led_frame=''
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             IFS= read -r task_led_value < "$LED:$task_led_color:ring$task_led_zone/brightness"
             task_led_frame="$task_led_frame $task_led_value"
@@ -335,16 +350,30 @@ frame() {
 }
 paint() {
     set -- $1
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             printf '%s\n' "$1" > "$LED:$task_led_color:ring$task_led_zone/brightness"
             shift
         done
     done
 }
+# Expand a logical frame to the physical channels following zone_map.
+# Logical zones repeat in pairs on Mini 2 and map 1:1 elsewhere.
+map_frame() {
+    set -- $1
+    task_led_logical=1
+    task_led_mapped=''
+    for task_led_ref in $zone_map; do
+        while [ "$task_led_logical" -lt "$task_led_ref" ]; do
+            shift 3
+            task_led_logical=$((task_led_logical + 1))
+        done
+        task_led_mapped="$task_led_mapped $1 $2 $3"
+    done
+}
 restore_frame() {
     set -- $saved
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             task_led_path="$LED:$task_led_color:ring$task_led_zone"
             # A new owner must not lose its trigger to a saved zero brightness.
@@ -378,6 +407,9 @@ while IFS= read -r -t 2 task_led_command; do
         0) release; continue ;;
         *) continue ;;
     esac
+    # Comparisons and painting below work on physical channels.
+    map_frame "$task_led_requested"
+    task_led_requested=$task_led_mapped
     if mute_status; then
         release
         continue
@@ -403,7 +435,7 @@ while IFS= read -r -t 2 task_led_command; do
     if [ "$owned" = 0 ]; then
         # A wake/listening color at mode entry is transient. The ordinary
         # idle state after closing chat is dark; native triggers are restored.
-        saved=' 0 0 0 0 0 0 0 0 0'
+        saved=$dark_frame
         [ "${ALISA_LED_PREVIEW:-0}" != 1 ] || saved=$task_led_current
         triggers; saved_triggers=$task_led_triggers
         owned=1

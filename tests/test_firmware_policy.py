@@ -108,7 +108,7 @@ class FirmwarePolicy(unittest.TestCase):
         def launcher():
             return {'nodes':[{'tasks':[{'arg':['--platformd'],'envs':[]},
                                        {'arg':['--mediad'],'envs':[]}]}]}
-        for model,wanted in [('yandexmidi',True),(None,False),('lite2',False)]:
+        for model,wanted in [('yandexmidi',True),(None,False),('lite2',False),('mini2',False)]:
             launch,_=module.profiles(launcher(),{'audioclient':{'controller':{'playbackParams':{
                 'OPUS_STREAM':{'gstPipeline':'{STREAM_PIPELINE}'},'PCM_STREAM':{'gstPipeline':'{STREAM_PIPELINE}'},
                 'common':{'gstProperties':{'STREAM_PIPELINE':'appsrc name=stream-src ! {SINK}'}}}}}},model)
@@ -137,6 +137,18 @@ class FirmwarePolicy(unittest.TestCase):
 
     def test_yandexmidi_pinned_build_is_verified(self):
         config,report=self.report(model='yandex,station-midi',pair=('9ad1476ee37df3e401a8426df7710f8f3d2d0695e01d0b949d99a5a8b562a4d2','e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af'))
+        self.assertEqual(report['firmware_status'],'verified')
+        self.assertTrue(report['firmware_abi_supported']);self.assertEqual(report['warnings'],[])
+
+    def test_mini2_is_supported_with_unverified_firmware_warning(self):
+        config,report=self.report(model='yandex,station-mini2')
+        self.assertEqual(report['model'],'mini2')
+        self.assertTrue(report['plum']);self.assertTrue(report['ok'])
+        self.assertFalse(report['firmware_abi_supported'])
+        self.assertTrue(report['warnings'])
+
+    def test_mini2_pinned_build_is_verified(self):
+        config,report=self.report(model='yandex,station-mini2',pair=('7ff114e08d46d48394f9d794f89dc941f3b217bdcd3ff1ef46f1cd80fada6ec1','fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f'))
         self.assertEqual(report['firmware_status'],'verified')
         self.assertTrue(report['firmware_abi_supported']);self.assertEqual(report['warnings'],[])
 
