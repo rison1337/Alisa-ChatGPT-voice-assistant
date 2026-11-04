@@ -63,6 +63,19 @@ def ssh(host: str, text: str, **kwargs) -> bytes:
     return command(*ssh_args(host), text, **kwargs)
 
 
+_socat_paths = {}
+
+
+def socat_command(host: str) -> str:
+    """Resolve socat once per host; entware keeps it outside the default SSH PATH."""
+    if host not in _socat_paths:
+        path = ssh(host, 'command -v socat || command -v /data/opt/entware/bin/socat || true').decode().strip()
+        if not path:
+            raise RuntimeError('socat is missing on the station')
+        _socat_paths[host] = path
+    return _socat_paths[host]
+
+
 def read_state() -> dict:
     try:
         return json.loads(STATE_FILE.read_text())
@@ -178,7 +191,7 @@ def rms(data: bytes) -> float:
 async def probe_station(host: str, seconds: int = 2) -> dict:
     proc = await asyncio.create_subprocess_exec(
         *ssh_args(host),
-        f'exec socat -u UNIX-RECV:{REMOTE}/microphone.sock,unlink-early STDOUT',
+        f'exec {socat_command(host)} -u UNIX-RECV:{REMOTE}/microphone.sock,unlink-early STDOUT',
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
@@ -350,7 +363,7 @@ async def run_bridge(host: str) -> None:
             return proc
 
         capture = await spawn(*ssh_args(host),
-                              f'exec socat -u UNIX-RECV:{REMOTE}/microphone.sock,unlink-early STDOUT')
+                              f'exec {socat_command(host)} -u UNIX-RECV:{REMOTE}/microphone.sock,unlink-early STDOUT')
         mic_player = await spawn('pacat', '--playback', '--raw', '--format=s16le',
                                  f'--rate={MICROPHONE_RATE}', '--channels=1', f'--device={MIC_BACKEND}',
                                  '--latency-msec=20', '--process-time-msec=10',

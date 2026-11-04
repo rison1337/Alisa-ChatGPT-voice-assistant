@@ -9,7 +9,7 @@ def windows_chromium():
 
 def inspect(config):
     s=Station(config)
-    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay socat base64 sha256sum ip; do command -v "$x" || true; done; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
+    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay base64 sha256sum ip; do command -v "$x" || true; done; command -v socat || command -v /data/opt/entware/bin/socat || true; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
     lines=s.text(script).replace('\x00',' ').splitlines()
     if len(lines)<3:raise RuntimeError('Колонка вернула неполный ответ SSH. Повторите проверку подключения.')
     root=lines[0].strip()=='0'

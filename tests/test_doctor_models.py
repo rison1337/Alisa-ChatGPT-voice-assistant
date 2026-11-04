@@ -85,5 +85,8 @@ class Models(unittest.TestCase):
  def test_mini2_bridge_is_supported_with_socat(self):
   r=self.check('bridge',output('yandex,station-mini2',*MINI2,tools=('aplay','base64','sha256sum','socat')))
   self.assertEqual(r['model'],'mini2');self.assertTrue(r['mode_supported']);self.assertTrue(r['ok'])
+ def test_entware_socat_path_counts_as_installed(self):
+  r=self.check('bridge',output('yandex,station-mini2',*MINI2)+'/data/opt/entware/bin/socat\n')
+  self.assertEqual(r['station_missing'],[]);self.assertTrue(r['ok'])
 
 if __name__=='__main__':unittest.main()
