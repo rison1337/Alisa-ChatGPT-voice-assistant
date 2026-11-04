@@ -31,7 +31,11 @@ def status(config):
             check_result(r)
             raise PublicError('station_reply_invalid') from None
         if not isinstance(result,dict):raise PublicError('station_reply_invalid')
-        if result.get('error')=='control_unavailable':result={'phase':'stopped','agent_connected':False,'error':''}
+        # Startup transients arrive with exit code 2 while the monitor creates
+        # the state directory. state_unavailable also survives as a sticky
+        # last-call error with exit 0; only the failed reply is transient.
+        transient=result.get('error')=='control_unavailable' or r.returncode==2 and result.get('error')=='state_unavailable'
+        if transient:result={'phase':'stopped','agent_connected':False,'error':''}
         else:
             check_result(r)
             if not isinstance(result.get('phase'),str):raise PublicError('station_reply_invalid')

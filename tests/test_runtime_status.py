@@ -25,6 +25,18 @@ class NativeStatus(unittest.TestCase):
   with patch.object(runtime.Station,'run',return_value=response):result=runtime.status(c)
   self.assertEqual(result['phase'],'stopped');self.assertFalse(result['agent_connected'])
 
+ def test_state_unavailable_during_first_start_is_stopped(self):
+  c=state.defaults('native');c['host']='192.0.2.44'
+  response=subprocess.CompletedProcess([],2,stdout=b'{"error":"state_unavailable","ok":false}',stderr=b'')
+  with patch.object(runtime.Station,'run',return_value=response):result=runtime.status(c)
+  self.assertEqual(result['phase'],'stopped');self.assertFalse(result['agent_connected'])
+
+ def test_sticky_state_unavailable_keeps_the_live_daemon_reply(self):
+  c=state.defaults('native');c['host']='192.0.2.44'
+  response=subprocess.CompletedProcess([],0,stdout=b'{"phase":"idle","agent_connected":true,"error":"state_unavailable"}',stderr=b'')
+  with patch.object(runtime.Station,'run',return_value=response):result=runtime.status(c)
+  self.assertEqual(result['phase'],'idle');self.assertTrue(result['agent_connected'])
+
  def test_invalid_success_reply_does_not_allow_update(self):
   c=state.defaults('native');c['host']='192.0.2.44'
   for output in (b'',b'[]',b'{}',b'not JSON'):
