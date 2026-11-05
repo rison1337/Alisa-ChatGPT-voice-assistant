@@ -32,14 +32,17 @@ class Preview:
                 try:
                     if self.config.get('installed'):
                         status=runtime.status(self.config)
-                        if status.get('phase') in ('active','opening') or status.get('voice_active'):
+                        if status.get('phase') in ('active','opening','connecting') or status.get('voice_active'):
                             self.error='Сейчас идёт разговор GPT: демо не меняет его индикацию. Цвет можно выбрать и сохранить.'
                     if not self.error:
                         station=Station(self.config)
                         station.run('test -d /sys/class/leds/plum:red:ring1 || test -d /sys/class/leds/micro:red:ring1 || '
                                     'test -d /sys/class/leds/mini2:red:ring1 || '
                                     '{ test -c /dev/fb0 && test "$(cat /sys/class/graphics/fb0/virtual_size)" = 89,1 && '
-                                    'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 32; }',timeout=12)
+                                    'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 32; } || '
+                                    '{ tr "\\000" "\\n" < /proc/device-tree/compatible | grep -Eq "^yandex,bergamot(-evt1)?$" && '
+                                    'test -c /dev/fb0 && test "$(cat /sys/class/graphics/fb0/virtual_size)" = 6,1 && '
+                                    'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 24; }',timeout=12)
                         script=(ROOT/'assets/native/indicator.sh').read_bytes()
                         # Dropbear rejects long exec requests (~8 KiB on Lite 2).
                         # Send the source as one stdin line, then stream frames

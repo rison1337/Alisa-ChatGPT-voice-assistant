@@ -1,6 +1,18 @@
 #!/bin/sh
 # Temporary ChatGPT LED ownership; no firmware files are edited.
 set -efu
+# An explicit opt-out acknowledges frames without acquiring LEDs.
+if [ "${ALISA_DISABLE_LED:-0}" = 1 ]; then
+    trap 'exit 0' TERM INT HUP
+    while IFS= read -r task_led_command; do
+        case "$task_led_command" in
+            F\ *) printf 'FRAME\n' ;;
+            B) printf 'BLUE\n' ;;
+            0) printf 'STOCK\n' ;;
+        esac
+    done
+    exit 0
+fi
 LED=${ALICE_LED_ROOT:-/sys/class/leds/plum}
 # Lite 1 (yandex,station-micro) has the same 3x3 ring under another name
 # and only a software microphone mute, so there is no switch to report.
@@ -29,9 +41,20 @@ for task_led_zone in $zones; do dark_frame="$dark_frame 0 0 0"; done
 # Station 2 (yandexmidi) drives its 88-LED panel through a framebuffer
 # (/dev/fb0, 89x1 RGBW) instead of plum sysfs rings; render there instead.
 panel_mode=0
+mini3_mode=0
 if [ -z "${ALICE_LED_ROOT:-}" ]; then
-    if [ -n "${ALICE_PANEL_FB:-}" ]; then
-        # Explicit framebuffer paths are also used by isolated device tests.
+    # Explicit fixture paths must take precedence over physical device detection.
+    if [ -n "${ALICE_MINI3_FB:-}" ]; then
+        mini3_mode=1
+        panel_mode=1
+    elif [ -n "${ALICE_PANEL_FB:-}" ]; then
+        panel_mode=1
+    elif tr '\000' '\n' < /proc/device-tree/compatible 2>/dev/null | grep -Eq '^yandex,bergamot(-evt1)?$'; then
+        # Mini 3 has six BGR pixels; it does not use Mini 2's sysfs LEDs.
+        [ -c /dev/fb0 ] &&
+        [ "$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)" = 6,1 ] &&
+        [ "$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null)" = 24 ] || exit 0
+        mini3_mode=1
         panel_mode=1
     elif [ ! -e "$LED:red:ring1" ] && [ ! -e /sys/class/leds/micro:red:ring1 ] && [ ! -e /sys/class/leds/mini2:red:ring1 ]; then
         # Do not send RGBW bytes to another model's framebuffer (Lite 2 is 3x1).
@@ -122,6 +145,9 @@ mute_status() {
 }
 # --- Station 2 panel backend (88 LEDs, zigzag map, /dev/fb0 RGBW) ---
 PANEL_FB=${ALICE_PANEL_FB:-/dev/fb0}
+[ "$mini3_mode" = 0 ] || PANEL_FB=${ALICE_MINI3_FB:-/dev/fb0}
+panel_bytes=356
+[ "$mini3_mode" = 0 ] || panel_bytes=18
 # led x y zone: zone 1..3 by distance from the center (ring1 = inner),
 # map transcribed from the experimental index map for the Station 2 panel.
 panel_map='0 1 0 3
@@ -215,20 +241,28 @@ panel_map='0 1 0 3
 # Read just one frame and escape NUL bytes before storing it in a shell variable.
 # The prefix flags a native red warning. A short/unreadable frame is not owned.
 panel_read() {
-    task_panel_snapshot=$(od -An -v -t u1 -N 356 "$PANEL_FB" 2>/dev/null | awk '
+    task_panel_snapshot=$(od -An -v -t u1 -N "$panel_bytes" "$PANEL_FB" 2>/dev/null | awk -v bytes="$panel_bytes" -v mini3="$mini3_mode" '
         { for (i=1; i<=NF; i++) {
             n++; v=$i; out=out sprintf("\\0%03o", v)
-            if (n<=352) {
-                if (n%4==1 && v>0) red=1
-                if (n%4!=1 && v>0) other=1
+            if (mini3 || n<=352) {
+                if ((mini3 ? n%3==0 : n%4==1) && v>0) red=1
+                if ((mini3 ? n%3!=0 : n%4!=1) && v>0) other=1
             }
         } }
-        END { if (n!=356) exit 1; printf "%d %s", red && !other, out }
+        END { if (n!=bytes) exit 1; printf "%d %s", red && !other, out }
     ') || return 1
     task_panel_warning=${task_panel_snapshot%% *}
     task_panel_current=${task_panel_snapshot#* }
 }
 panel_encode() {
+    if [ "$mini3_mode" = 1 ]; then
+        # Match Mini 2's pairs: logical zones 1/2/3 -> pixels 0-1/2-3/4-5.
+        task_panel_encoded=$(awk -v v="$1" 'BEGIN {
+            split(v,a," "); for(z=0;z<3;z++) for(p=0;p<2;p++)
+                printf "\\0%03o\\0%03o\\0%03o",a[z*3+3],a[z*3+2],a[z*3+1]
+        }')
+        return
+    fi
     task_panel_encoded=$(awk -v v="$1" -v map="$panel_map" '
         BEGIN {
             split(v, a, " "); lines=split(map, rows, "\n")
@@ -256,11 +290,45 @@ panel_unmuted() {
         END { exit (!found || bad || muted) }
     ' "$MUTE_GPIO"
 }
+ring_waiting=0
+ring_external=''
+ring_until=0
+ring_uptime_file=${ALISA_RING_UPTIME_FILE:-/proc/uptime}
+ring_now() {
+    IFS=' ' read -r ring_uptime ring_unused < "$ring_uptime_file" || return 1
+    ring_seconds=${ring_uptime%%.*}
+    ring_fraction=${ring_uptime#*.}00
+    ring_fraction=${ring_fraction%${ring_fraction#??}}
+    case "$ring_seconds:$ring_fraction" in ''|*[!0-9:]*) return 1 ;; esac
+    ring_now=$((ring_seconds * 100 + 1$ring_fraction - 100))
+}
+mini3_ring_ready() {
+    [ "$mini3_mode" = 1 ] || return 0
+    # A firmware repaint is ownership, not a frame we should fight. Wait for
+    # two quiet seconds before resuming; every new external frame renews it.
+    if ! ring_now; then ring_waiting=1; panel_release; return 1; fi
+    if [ "$ring_waiting" = 0 ] && [ "$panel_owned" = 1 ] &&
+       [ "$task_panel_current" != "$panel_painted" ]; then
+        ring_waiting=1
+        ring_external=$task_panel_current
+        ring_until=$((ring_now + 200))
+        panel_release
+    fi
+    if [ "$ring_waiting" = 1 ]; then
+        if [ "$task_panel_current" != "$ring_external" ]; then
+            ring_external=$task_panel_current
+            ring_until=$((ring_now + 200))
+        fi
+        [ "$ring_now" -ge "$ring_until" ] || return 1
+        ring_waiting=0
+    fi
+}
 panel_release() {
     if [ "$panel_owned" = 1 ]; then
         # Firmware may already own a new warning/animation. Never clear it;
         # mute or an unknown GPIO state also forbids the final write.
-        if panel_unmuted && panel_read && [ "$task_panel_current" = "$panel_painted" ]; then
+        if { [ "$mini3_mode" = 0 ] || [ "$ring_waiting" = 0 ]; } &&
+           panel_unmuted && panel_read && [ "$task_panel_current" = "$panel_painted" ]; then
             printf '%b' "$panel_saved" > "$PANEL_FB"
         fi
         panel_owned=0
@@ -269,11 +337,53 @@ panel_release() {
 }
 panel_owned=0
 if [ "$panel_mode" = 1 ]; then
-    trap 'panel_release; exit 0' TERM INT HUP
-    trap panel_release EXIT
+    # Feed the independent clock even when the ring yields to firmware. Preview
+    # never starts it. Opening the FIFO read/write avoids a deadlock if the
+    # optional helper exits before its first read. Give the child a separate
+    # read-only FD so it still receives EOF when the parent's writer closes.
+    clock_pid=''; clock_dir=''
+    clock_stop() {
+        if [ -n "$clock_pid" ]; then
+            exec 3>&-
+            clock_wait=0
+            # Clock handoff includes a 1.25 s settling interval plus unmounts.
+            while kill -0 "$clock_pid" 2>/dev/null && [ "$clock_wait" -lt 80 ]; do
+                sleep .05; clock_wait=$((clock_wait + 1))
+            done
+            kill -TERM "$clock_pid" 2>/dev/null || true
+            wait "$clock_pid" 2>/dev/null || true
+            clock_pid=''
+        fi
+        if [ -n "$clock_dir" ]; then
+            rm -f "$clock_dir/input"; rmdir "$clock_dir"; clock_dir=''
+        fi
+    }
+    panel_finish() { panel_release; clock_stop; }
+    trap 'exit 0' TERM INT HUP
+    trap panel_finish EXIT
+    clock_mode=eyes
+    clock_mode_file=${ALISA_CLOCK_MODE_FILE:-$(dirname -- "$0")/display-mode}
+    if [ -e "$clock_mode_file" ]; then
+        clock_mode=$(cat "$clock_mode_file" 2>/dev/null) || clock_mode=clock
+    fi
+    if [ "$mini3_mode" = 1 ] && [ "${ALISA_MINI3_CLOCK_EYES:-0}" = 1 ] &&
+       [ "$clock_mode" = eyes ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ]; then
+        clock_dir=$(mktemp -d /tmp/alisa-ring-clock-XXXXXX)
+        mkfifo "$clock_dir/input"
+        exec 3<>"$clock_dir/input"
+        exec 4<"$clock_dir/input"
+        sh "$(dirname -- "$0")/clock-eyes.sh" <&4 3>&- 4>&- > /dev/null &
+        clock_pid=$!
+        exec 4<&-
+        trap '' PIPE
+    fi
     panel_encode ' 0 0 0 0 0 0 0 0 0'; panel_dark=$task_panel_encoded
     panel_requested=''; panel_painted=''
     while IFS= read -r -t 2 task_led_command; do
+        if [ -n "$clock_pid" ]; then
+            if ! kill -0 "$clock_pid" 2>/dev/null ||
+               ! printf '%s\n' "$task_led_command" >&3; then clock_stop; fi
+        fi
         case "$task_led_command" in
             B) task_led_requested=$blue ;;
             F\ *) decode_frame "${task_led_command#F }" || continue
@@ -286,6 +396,10 @@ if [ "$panel_mode" = 1 ]; then
         esac
         if ! panel_unmuted || ! panel_read; then
             panel_release
+            continue
+        fi
+        if ! mini3_ring_ready; then
+            case "$task_led_command" in F\ *) printf 'FRAME\n' ;; B) printf 'BLUE\n' ;; esac
             continue
         fi
         if { [ "$panel_owned" = 0 ] || [ "$task_panel_current" != "$panel_painted" ]; } &&

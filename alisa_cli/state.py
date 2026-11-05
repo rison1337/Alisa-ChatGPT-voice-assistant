@@ -26,7 +26,7 @@ def write_private(path,value):
 def defaults(mode):
     if mode not in MODES:raise ValueError('Выберите native или bridge')
     return {'version':1,'mode':mode,'host':'','user':'root','port':2222,'identity':None,
-        'autostart':False,'led':'rainbow','listen_led':False,'phrases':dict(DEFAULT_PHRASES),'installed':False,
+        'autostart':False,'led':'rainbow','listen_led':False,'disable_stun':False,'display':'eyes','phrases':dict(DEFAULT_PHRASES),'installed':False,
         'vpn':{'enabled':False,'autostart':False,'required':False}}
 
 def load(mode):
@@ -60,4 +60,6 @@ def validate(value):
     if value.get('user') and not re.fullmatch('[a-zA-Z0-9_-]+',value['user']):raise ValueError('Некорректный SSH-пользователь')
     if value.get('led') not in STYLES:raise ValueError('Неизвестный цвет/анимация')
     if not isinstance(value.get('listen_led',False),bool):raise ValueError('Подсветка в паузах должна быть включена или выключена')
+    if not isinstance(value.get('disable_stun',False),bool):raise ValueError('Отключение STUN должно быть включено или выключено')
+    if value.get('display','eyes') not in ('eyes','clock'):raise ValueError('Неизвестный режим дисплея')
     command_file(value['phrases'])

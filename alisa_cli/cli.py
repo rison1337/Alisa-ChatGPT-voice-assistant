@@ -78,15 +78,20 @@ def settings(config,apply=True,fields=('phrases','led')):
     if 'led' in fields:
         from . import lighting
         config['led']=lighting.choose(config)
+    if 'display' in fields:
+        from . import display
+        config['display']=display.choose(config)
     validate(config)
     if apply:save_preferences(config,previous)
     else:ui.note('Настройки выбраны.','green')
 
 def save_preferences(config,previous):
-    if all(config.get(key)==previous.get(key) for key in ('phrases','led','listen_led')):
+    if all(config.get(key)==previous.get(key) for key in ('phrases','led','listen_led','display')):
         ui.note('Настройки не изменились.');return
     runtime.update_preferences(config,previous)
     save(config);ui.note('Настройки сохранены.','green')
+    if config.get('display','eyes')!=previous.get('display','eyes'):
+        ui.note('Режим дисплея применится со следующего разговора GPT.')
 
 def setup_key(config,allow_saved=False):
     return ssh_setup.form(config,ui,allow_saved=allow_saved)
@@ -131,6 +136,60 @@ def verify(config):
         raise RuntimeError('Не получен подтверждённый голосовой ответ. Проверьте сеть и лимит аккаунта.')
     finally:runtime.native_action(config,'close')
 
+
+def verify_with_stun_retry(config):
+    """Retry only an explicit ICE timeout, preserving the original setting on failure."""
+    try:return verify(config)
+    except RuntimeError as error:
+        if (str(error)!='ice_gather_timeout' or config['mode']!='native' or
+                config.get('disable_stun',False) or not ui.interactive()):raise
+        ui.note('Не удалось установить голосовое соединение: ice_gather_timeout.','yellow')
+        ui.note('Для этой сети может помочь отключение STUN. GPT будет перезапущен.')
+        if not yes('Повторить проверку без STUN?',False):raise
+    previous=copy.deepcopy(config)
+    candidate=copy.deepcopy(config);candidate['disable_stun']=True
+    stopped=False
+    try:
+        with ui.activity('Останавливаю GPT перед повтором без STUN'):
+            runtime.stop(config)
+        stopped=True
+        with ui.activity('Запускаю GPT без STUN'):
+            start_mode(candidate)
+        with ui.activity('Проверяю голос без STUN'):
+            result=verify(candidate)
+        if not result.get('real_reply_verified'):
+            raise RuntimeError('Повторная проверка не подтвердила голосовой ответ.')
+        config['disable_stun']=True
+        save(config)
+    except BaseException:
+        config.clear();config.update(previous)
+        if stopped:
+            try:
+                with ui.activity('Восстанавливаю прежнюю настройку STUN'):
+                    runtime.stop(candidate)
+                    start_mode(previous)
+                    save(previous)
+            except Exception as rollback_error:
+                raise RuntimeError('Не удалось восстановить прежний режим STUN. Проверьте состояние GPT перед повторным запуском.') from rollback_error
+        ui.note('Прежняя настройка STUN восстановлена.','yellow')
+        raise
+    ui.note('Голосовой ответ подтверждён. Отключение STUN сохранено для следующих запусков.','green')
+    return result
+
+
+def stun_settings(config,operation=None):
+    if config['mode']!='native':raise ValueError('STUN настраивается только в нативном режиме')
+    current=not config.get('disable_stun',False)
+    enabled=operation=='stun-on' if operation in ('stun-on','stun-off') else ui.select(
+        'Использовать STUN?', [('Да — стандартный режим',True),('Нет — обход ICE-таймаута',False)],default=current)
+    if enabled==current:
+        ui.note('Настройка STUN не изменилась.');return
+    candidate=copy.deepcopy(config);candidate['disable_stun']=not enabled
+    save(candidate)
+    config.update(candidate)
+    ui.note('STUN '+('включён.' if enabled else 'отключён.')+' Применится после перезапуска GPT.','green')
+
+
 def friendly(error):
     return {'voice_daily_limit_reached':'Дневной лимит голосового ChatGPT исчерпан. Возвращена Алиса; повторите после сброса лимита.',
        'browser_verification_required':'Нужна проверка браузера: выполните bridge login. Алиса восстановлена.',
@@ -165,11 +224,14 @@ def installation_options(config,network_result):
         settings(config,apply=False,fields=('phrases',))
     ui.note('Подсветка GPT','bold')
     settings(config,apply=False,fields=('led',))
+    if config['mode']=='native' and config.get('model')=='bergamot':
+        ui.note('Дисплей во время GPT','bold')
+        settings(config,apply=False,fields=('display',))
     return {'use_vpn':use_vpn,'source':source,'selection':selection,'vpn_autostart':vpn_auto}
 
 def wizard(config):
     updating=config.get('installed',False)
-    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 1, Лайт 2, Мини 2 или Станция 2 с готовыми root и SSH. Мост — Лайт 2 и Мини 2.')
+    ui.note(NAMES[config['mode']],'cyan');ui.note('Нужна Лайт 1, Лайт 2, Мини 2, Мини 3 или Станция 2 с готовыми root и SSH. Мост — Лайт 2 и Мини 2.')
     if updating:ui.note('Уже установлено. Мастер обновит программу и настройки; вход ChatGPT и чаты сохранятся.','cyan')
     ui.note('Мастер сам выполнит проверки, предложит нужные настройки и запустит установленный режим.')
     ui.step(3,'Подключение и проверка колонки')
@@ -225,7 +287,7 @@ def wizard(config):
     logged_in=current.get('login_saved',False)
     if logged_in:ui.note('Вход ChatGPT уже сохранён. Повторная авторизация не нужна.','green')
     if yes('Обновить вход ChatGPT?' if logged_in else 'Войти в ChatGPT сейчас?',not logged_in):accounts.login(config)
-    if yes('Проверить голос коротким тестовым ответом?',True):show(verify(config))
+    if yes('Проверить голос коротким тестовым ответом?',True):show(verify_with_stun_retry(config))
     ui.note(('Обновление завершено.' if updating else 'Установка завершена.')+' Управление доступно в меню.','green')
 
 def main(argv=None):
@@ -235,7 +297,7 @@ def main(argv=None):
         except ui.Back:return 0
         except (KeyboardInterrupt,EOFError):return 130
         except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as error:ui.note(str(error),'red');return 1
-    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1, Лайт 2, Мини 2 и Станция 2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1, Лайт 2, Мини 2 и Станция 2: нативный GPT. Мост — Лайт 2 и Мини 2. Сначала выберите режим.')
+    parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1/2, Мини 2/3 и Станция 2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1/2, Мини 2/3 и Станция 2: нативный GPT. Мост — Лайт 2 и Мини 2. Сначала выберите режим.')
     parser.add_argument('--version',action='version',version=__version__)
     parser.add_argument('mode',nargs='?',choices=MODES)
     parser.add_argument('action',nargs='?',choices=['install','update','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
@@ -309,7 +371,9 @@ def main(argv=None):
         elif action=='settings':
             if not supports_lighting(config.get('model')) and (args.operation=='listen-on' or (args.led and args.led!='off')):
                 raise ValueError(LIGHTING_UNAVAILABLE)
-            if args.operation in ('listen-on','listen-off'):
+            if args.operation in ('stun','stun-on','stun-off'):
+                stun_settings(config,args.operation)
+            elif args.operation in ('listen-on','listen-off'):
                 if mode!='native':raise ValueError('Подсветка в паузах настраивается для нативного режима')
                 previous=copy.deepcopy(config);config['listen_led']=args.operation=='listen-on'
                 save_preferences(config,previous)
@@ -317,7 +381,7 @@ def main(argv=None):
             elif args.led:
                 previous=copy.deepcopy(config);config['led']=args.led
                 save_preferences(config,previous)
-            elif args.operation in ('phrases','led'):settings(config,fields=(args.operation,))
+            elif args.operation in ('phrases','led','display'):settings(config,fields=(args.operation,))
             else:settings(config)
         elif action=='autostart':
             operation=args.operation or pick('Автозапуск', [('Включить','on'),('Выключить','off'),('Проверить','status')])
@@ -327,7 +391,7 @@ def main(argv=None):
             else:raise ValueError('Используйте autostart on, off или status')
         elif action=='login':accounts.login(config,change=args.operation=='change')
         elif action=='logout':accounts.logout(config)
-        elif action=='verify':show(verify(config))
+        elif action=='verify':show(verify_with_stun_retry(config))
         elif action=='voice':
             if mode!='native':raise ValueError('В браузерном мосте голос выбирается в настройках ChatGPT')
             current=runtime.status(config).get('settings',{}).get('voice')

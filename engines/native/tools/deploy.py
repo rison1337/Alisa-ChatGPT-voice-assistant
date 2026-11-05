@@ -89,7 +89,7 @@ def main():
         'abseil-LICENSE':'abseil-cpp/LICENSE',
     }.items():files['licenses/'+name]=(ROOT/'research/upstream'/path).read_bytes()
     for name in ['native_agent','vqe_tap','tts_gate','mute_gpio']:files[name+'.so']=(ROOT/'build'/(name+'.so')).read_bytes()
-    for name in ['profile.sh','indicator.sh','run.sh']:files[name]=(ROOT/'station'/name).read_bytes()
+    for name in ['profile.sh','indicator.sh','run.sh','clock-eyes.sh','clock-display.sh','clock-isolation.sh']:files[name]=(ROOT/'station'/name).read_bytes()
     if args.include_login:files['state/web-session.json']=(ROOT/'state/web-session.json').read_bytes()
     ssh(args.host,f'umask 077; mkdir -p {BASE}/bin {BASE}/state {BASE}/licenses; chmod 700 {BASE} {BASE}/state')
     hashes={}
