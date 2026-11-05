@@ -213,7 +213,11 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
         // delaying completion beyond the signalling deadline.
         if(const char *address=getenv("ALISA_ICE_BIND_ADDRESS"))
             if(*address)config.bindAddress=address;
-        config.iceServers.emplace_back("stun:stun.l.google.com:19302");
+        // Optional workaround from the Mini 1 port (ElectWRT, PR #6).
+        // Preserve default STUN; bypass only when explicitly configured for the network.
+        const char *disable_stun=getenv("ALISA_DISABLE_STUN");
+        if(!(disable_stun&&std::string(disable_stun)=="1"))
+            config.iceServers.emplace_back("stun:stun.l.google.com:19302");
         config.disableAutoNegotiation=true;config.mtu=1200;config.maxMessageSize=256*1024;
         pc=std::make_shared<rtc::PeerConnection>(config);
         pc->onGatheringStateChange([weak](rtc::PeerConnection::GatheringState state){

@@ -1,11 +1,16 @@
 """Temporary LED demo over one SSH stream, with the firmware mute guard."""
 import base64,colorsys,contextlib,math,subprocess,threading,time
-from .state import ROOT,STYLES,STYLE_NAMES
+from .state import ROOT,STYLES,STYLE_NAMES,LED_SCOPES,LED_SCOPE_NAMES
 from .ssh import Station
 from . import ui,runtime
 
 def label(style):
     return 'Пульсация: '+STYLE_NAMES[style[6:]].lower() if style.startswith('pulse-') else STYLE_NAMES[style]
+
+def choose_scope(config):
+    return ui.select('Когда показывать выбранную подсветку?',
+        [(LED_SCOPE_NAMES[scope]+(' (по умолчанию)' if scope=='speaking' else ''),scope) for scope in LED_SCOPES],
+        default=config.get('led_scope','speaking'))
 
 def frame(style,seconds):
     if style=='rainbow':
@@ -32,14 +37,17 @@ class Preview:
                 try:
                     if self.config.get('installed'):
                         status=runtime.status(self.config)
-                        if status.get('phase') in ('active','opening') or status.get('voice_active'):
+                        if status.get('phase') in ('active','opening','connecting') or status.get('voice_active'):
                             self.error='Сейчас идёт разговор GPT: демо не меняет его индикацию. Цвет можно выбрать и сохранить.'
                     if not self.error:
                         station=Station(self.config)
                         station.run('test -d /sys/class/leds/plum:red:ring1 || test -d /sys/class/leds/micro:red:ring1 || '
                                     'test -d /sys/class/leds/mini2:red:ring1 || '
                                     '{ test -c /dev/fb0 && test "$(cat /sys/class/graphics/fb0/virtual_size)" = 89,1 && '
-                                    'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 32; }',timeout=12)
+                                    'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 32; } || '
+                                    '{ tr "\\000" "\\n" < /proc/device-tree/compatible | grep -Eq "^yandex,bergamot(-evt1)?$" && '
+                                    'test -c /dev/fb0 && test "$(cat /sys/class/graphics/fb0/virtual_size)" = 6,1 && '
+                                    'test "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 24; }',timeout=12)
                         script=(ROOT/'assets/native/indicator.sh').read_bytes()
                         # Dropbear rejects long exec requests (~8 KiB on Lite 2).
                         # Send the source as one stdin line, then stream frames
@@ -52,7 +60,7 @@ trap 'exit 0' TERM INT HUP
 IFS= read -r task_led_demo_source
 printf '%s' "$task_led_demo_source" | base64 -d > "$task_led_demo"
 unset task_led_demo_source
-ALISA_LED_PREVIEW=1 ALISA_LISTEN_LED=0 ALISA_LISTEN_LED_FILE= sh "$task_led_demo"
+ALISA_LED_PREVIEW=1 ALISA_LISTEN_LED=0 ALISA_LISTEN_LED_FILE= ALISA_LED_SCOPE_FILE= sh "$task_led_demo"
 '''
                         self.process=station.open_input(bootstrap)
                         self.process.stdin.write(base64.b64encode(script)+b'\n');self.process.stdin.flush()

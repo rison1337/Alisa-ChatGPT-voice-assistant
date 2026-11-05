@@ -27,9 +27,10 @@ class LivePreferences(unittest.TestCase):
   with patch.object(runtime,'Station') as station,patch.object(runtime,'status',return_value={'agent_connected':True,'phase':'active','led_style':'rainbow'}),patch.object(runtime,'native_action') as action,patch.object(runtime,'start') as start,patch.object(runtime,'stop') as stop:
    runtime.update_preferences(c,old)
   action.assert_called_once_with(c,'led','red');start.assert_not_called();stop.assert_not_called()
-  self.assertEqual(station.return_value.put.call_count,2)
+  self.assertEqual(station.return_value.put.call_count,3)
   self.assertEqual(dict(call.args for call in station.return_value.put.call_args_list),{
-   runtime.NATIVE+'/runtime.env':runtime.native_environment(c),runtime.NATIVE+'/listen-led':b'0\n'})
+   runtime.NATIVE+'/runtime.env':runtime.native_environment(c),runtime.NATIVE+'/listen-led':b'0\n',
+   runtime.NATIVE+'/led-scope':b'speaking red\n'})
   station.return_value.run.assert_not_called()
 
  def test_bridge_led_does_not_connect_over_ssh_or_close_browser(self):
@@ -77,7 +78,7 @@ class LivePreferences(unittest.TestCase):
   c=config();c.pop('listen_led',None)
   with tempfile.TemporaryDirectory() as folder,patch.object(state,'HOME',Path(folder)):
    state.save(c);loaded=state.load('native');self.assertFalse(loaded['listen_led'])
-   self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),menus.entries('native','settings',loaded))
+   self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),menus.entries('native','lighting',loaded))
   with patch.object(cli,'load',return_value=c),patch.object(runtime,'update_preferences') as apply,patch.object(cli,'save') as save:
    self.assertEqual(cli.main(['native','settings','listen-on']),0)
   self.assertTrue(c['listen_led']);save.assert_called_once_with(c);apply.assert_called_once()

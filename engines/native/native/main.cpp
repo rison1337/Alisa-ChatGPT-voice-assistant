@@ -17,7 +17,7 @@ int main(int argc,char **argv){
 #else
                 {"audio_engine","Sonic PI"},{"audio_pipeline_revision",4},
 #endif
-                {"live_settings_revision",1},{"pointer_bits",sizeof(void *)*8},
+                {"live_settings_revision",1},{"ice_stun_toggle_revision",1},{"pointer_bits",sizeof(void *)*8},
                 {"rss_kib",rss_kib()},{"opus",opus_get_version_string()},
                 {"curl",curl_version_info(CURLVERSION_NOW)->version}}.dump()<<"\n";return 0;
         }

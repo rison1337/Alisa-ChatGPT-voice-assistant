@@ -15,6 +15,7 @@ class LightingPreview(unittest.TestCase):
     def fixture(self,folder,geometry='89,1'):
         root=Path(folder);fb=root/'fb0';gpio=root/'gpio'
         original=bytes((0,20,60,0))*88+bytes(4);fb.write_bytes(original)
+        scope=root/'led-scope';scope.write_text('active rainbow\n')
         gpio.write_text(' gpio-421 ( |MUTE_SWITCH ) in lo\n gpio-464 ( |MUTE_STATE ) in lo\n')
         graphics=root/'graphics/fb0';graphics.mkdir(parents=True)
         (graphics/'virtual_size').write_text(geometry+'\n');(graphics/'bits_per_pixel').write_text('32\n')
@@ -26,7 +27,8 @@ class LightingPreview(unittest.TestCase):
                 command=command.replace('/dev/fb0',str(fb)).replace('test -c ','test -f ')
                 subprocess.run(['sh','-c',command],check=True,capture_output=True)
             def open_input(self,command):
-                env={**os.environ,'ALICE_PANEL_FB':str(fb),'ALICE_MUTE_GPIO_STATUS':str(gpio)}
+                env={**os.environ,'ALICE_PANEL_FB':str(fb),'ALICE_MUTE_GPIO_STATUS':str(gpio),
+                     'ALISA_LED_SCOPE_FILE':str(scope)}
                 env.pop('ALICE_LED_ROOT',None)
                 # The host fixture uses bash; target BusyBox ash is checked separately.
                 if len(command)>8192:raise RuntimeError('SSH exec request exceeds device limit')

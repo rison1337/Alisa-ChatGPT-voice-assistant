@@ -7,7 +7,14 @@
   "prompt-toolkit": {
     "version": "3.0.53",
     "url": "https://files.pythonhosted.org/packages/54/6f/84908cad2d6aa5144abcf7b42709fe4fdb459bc640ec7ac5786e7693dabc/prompt_toolkit-3.0.53-py3-none-any.whl",
-    "sha256": "01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2"
+    "sha256": "01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2",
+    "local_modifications": [
+      {
+        "path": "alisa_cli/_vendor/prompt_toolkit/input/win32.py",
+        "sha256": "2be70ab154cf82b8712579465032f9071ea96ef9a05744717ffc9cdc8b1e07d9",
+        "description": "Skip detached Win32 input notifications and release their events; see docs/terminal-ui-patches.md"
+      }
+    ]
   },
   "wcwidth": {
     "version": "0.9.4",

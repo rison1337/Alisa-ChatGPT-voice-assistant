@@ -729,11 +729,20 @@ class _Win32Handles:
 
         # Add reader.
         def ready() -> None:
-            # Tell the callback that input's ready.
+            # A queued notification can outlive detach or replacement by a
+            # nested prompt. Never call/rearm an expired registration: its
+            # event loop may already be shutting down the executor.
+            if self._remove_events.get(handle_value) is not remove_event:
+                windll.kernel32.CloseHandle(remove_event)
+                return
             try:
                 callback()
             finally:
-                run_in_executor_with_context(wait, loop=loop)
+                if self._remove_events.get(handle_value) is remove_event:
+                    run_in_executor_with_context(wait, loop=loop)
+                else:
+                    # The waiter has completed; ready now owns event cleanup.
+                    windll.kernel32.CloseHandle(remove_event)
 
         # Wait for the input to become ready.
         # (Use an executor for this, the Windows asyncio event loop doesn't
