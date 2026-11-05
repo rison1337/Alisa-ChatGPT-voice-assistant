@@ -53,6 +53,7 @@ def command_file(phrases):
 
 def validate(value):
     if 'password' in value:raise ValueError('Пароль SSH не сохраняется в настройках')
+    if value.get('ssh_auth') not in (None,'password','empty-password'):raise ValueError('Неизвестный способ входа SSH')
     if value.get('mode') not in MODES:raise ValueError('Неизвестный режим')
     host=value.get('host','')
     if not isinstance(host,str) or not host or host.startswith('-') or re.search(r'\s|[\x00-\x1f]',host):raise ValueError('Некорректный SSH-адрес')

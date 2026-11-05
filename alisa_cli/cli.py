@@ -25,7 +25,7 @@ def show_storage(value):
 def installation_help():
     ui.note('Мастер установки','bold')
     for line in [('1. Нативный режим: обработка на колонке.' if sys.platform=='win32' else '1. Выберите нативный режим или браузерный мост.'),
-      '2. Введите IP, порт и пароль. После проверки сохранится SSH-ключ.',
+      ('2. Введите IP, порт и выберите вход по паролю или существующим ключом.' if sys.platform=='win32' else '2. Введите IP, порт и пароль. После проверки сохранится SSH-ключ.'),
       '3. Мастер проверит модель, прошивку и компоненты.',
       '4. Мастер по очереди предложит VPN, автозапуск, фразы и подсветку.',
       '5. Посмотрите состав пакета, свободное место и итоговый размер.',
@@ -255,6 +255,9 @@ def main(argv=None):
             while True:
                 mode=requested_mode or pick('1/7 Alisa Voice — выберите режим',[(NAMES[x],x) for x in MODES]+[('Выход','exit')])
                 if mode=='exit':return 0
+                if sys.platform=='win32':
+                    from .winssh import prepare
+                    prepare(load(mode))
                 if not load(mode).get('installed'):
                     try:wizard(load(mode))
                     except ui.Back:
@@ -276,8 +279,12 @@ def main(argv=None):
         if args.action=='update':return updates.command([args.operation] if args.operation else [])
         for key in ['host','port','user','identity']:
             if getattr(args,key) is not None:config[key]=getattr(args,key)
+        if args.identity is not None:config.pop('ssh_auth',None)
         if args.action!='help' and not (args.action in ('install','ssh') and not args.yes and not args.dry_run):validate(config)
         action=args.action
+        if sys.platform=='win32' and action not in ('ssh','help') and not (action=='install' and not args.yes and not args.dry_run):
+            from .winssh import prepare
+            prepare(config)
         if action=='install':
             if args.dry_run or args.yes:
                 from .install import install

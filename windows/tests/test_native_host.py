@@ -11,8 +11,8 @@ from alisa_cli.win_browser import CDP,endpoint
 HOST_KEY=paramiko.RSAKey.generate(2048)
 
 class Server(paramiko.ServerInterface):
-    def __init__(self):self.commands={};self.forwards={}
-    def check_auth_password(self,user,password):return paramiko.AUTH_SUCCESSFUL if user=='root' and password=='synthetic-only-password' else paramiko.AUTH_FAILED
+    def __init__(self,password):self.commands={};self.forwards={};self.password=password
+    def check_auth_password(self,user,password):return paramiko.AUTH_SUCCESSFUL if user=='root' and password==self.password else paramiko.AUTH_FAILED
     def get_allowed_auths(self,user):return 'password'
     def check_channel_request(self,kind,channel):return paramiko.OPEN_SUCCEEDED if kind=='session' else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
     def check_channel_exec_request(self,channel,command):self.commands[channel.get_id()]=command.decode();return True
@@ -20,7 +20,8 @@ class Server(paramiko.ServerInterface):
         self.forwards[channel]=destination;return paramiko.OPEN_SUCCEEDED
 
 class Peer:
-    def __init__(self):
+    def __init__(self,password='synthetic-only-password'):
+        self.password=password;self.commands=[]
         self.socket=socket.socket();self.socket.bind(('127.0.0.1',0));self.socket.listen();self.socket.settimeout(.2)
         self.port=self.socket.getsockname()[1];self.done=threading.Event();self.clients=[];self.errors=[]
         self.thread=threading.Thread(target=self.accept,daemon=True);self.thread.start()
@@ -31,7 +32,7 @@ class Peer:
             except OSError:return
             thread=threading.Thread(target=self.serve,args=(client,),daemon=True);thread.start()
     def serve(self,client):
-        transport=paramiko.Transport(client);self.clients.append(transport);transport.add_server_key(HOST_KEY);server=Server()
+        transport=paramiko.Transport(client);self.clients.append(transport);transport.add_server_key(HOST_KEY);server=Server(self.password)
         try:
             transport.start_server(server=server);channel=transport.accept(10)
             if channel is None:return
@@ -44,11 +45,13 @@ class Peer:
             deadline=time.monotonic()+5
             while channel.get_id() not in server.commands and time.monotonic()<deadline:time.sleep(.01)
             command=server.commands.get(channel.get_id(),'');data=bytearray()
+            self.commands.append(command)
             while True:
                 part=channel.recv(65536)
                 if not part:break
                 data.extend(part)
             if command=='digest':channel.sendall(hashlib.sha256(data).hexdigest().encode())
+            elif command=='id -u':channel.sendall(b'0\n')
             elif command=='large':channel.sendall(bytes(range(256))*8192)
             elif command=='fail':channel.send_stderr(b'private remote details');channel.send_exit_status(7);channel.close();return
             else:channel.sendall(bytes(data))
@@ -70,6 +73,76 @@ class SSHTests(unittest.TestCase):
         self.pin=winssh.host_id(self.config)+' '+HOST_KEY.get_name()+' '+HOST_KEY.get_base64()+'\n'
         (self.folder/'known_hosts').write_text(self.pin)
     def tearDown(self):self.peer.close();self.temp.cleanup()
+    def test_empty_password_setup_and_later_connections_never_write_to_station(self):
+        from alisa_cli import state
+        self.peer.password=''
+        with patch.object(state,'HOME',self.folder/'state'):
+            result=winssh.use_password(self.config,'')
+            saved=state.load('native')
+        self.assertFalse(result['key_saved']);self.assertEqual(saved['ssh_auth'],'empty-password')
+        self.assertIsNone(saved['identity']);self.assertNotIn('password',saved)
+        # A fresh process needs no remembered credential for an empty password.
+        with patch.dict(winssh._passwords,{},clear=True):
+            self.assertEqual(winssh.run(saved,'id -u').stdout,b'0\n')
+        self.assertEqual(self.peer.commands,['id -u','id -u'])
+        self.assertFalse((self.folder/'state/ssh').exists())
+    def test_password_is_memory_only_and_is_not_reused_for_another_user(self):
+        from alisa_cli import state
+        with patch.dict(winssh._passwords,{},clear=True),patch.object(state,'HOME',self.folder/'state'):
+            winssh.use_password(self.config,'synthetic-only-password')
+            raw=(self.folder/'state/native/config.json').read_text(encoding='utf-8')
+            self.assertNotIn('synthetic-only-password',raw)
+            self.assertEqual(winssh.run(self.config,'id -u').stdout,b'0\n')
+            with self.assertRaisesRegex(RuntimeError,'Нужен пароль SSH'):
+                winssh.connect({**self.config,'user':'another'})
+            winssh._passwords.clear()
+            with self.assertRaisesRegex(RuntimeError,'Нужен пароль SSH'):winssh.connect(self.config)
+    def test_failed_password_setup_keeps_previous_config(self):
+        from alisa_cli import state
+        previous=dict(self.config)
+        with patch.object(state,'HOME',self.folder/'state'):
+            with self.assertRaises(RuntimeError):winssh.use_password(self.config,'incorrect')
+        self.assertEqual(self.config,previous)
+        self.assertFalse((self.folder/'state/native/config.json').exists())
+    def test_password_prompt_happens_once_before_workers_and_never_in_background(self):
+        from alisa_cli import ui
+        self.config['ssh_auth']='password'
+        with patch.dict(winssh._passwords,{},clear=True),patch.object(ui,'interactive',return_value=True),patch.object(ui,'secret',return_value='synthetic-only-password') as prompt:
+            winssh.prepare(self.config);winssh.prepare(self.config)
+            prompt.assert_called_once()
+            self.assertEqual(winssh.run(self.config,'id -u').stdout,b'0\n')
+        with patch.dict(winssh._passwords,{},clear=True),patch.object(ui,'interactive',return_value=False),patch.object(ui,'secret') as prompt:
+            with self.assertRaisesRegex(RuntimeError,'Нужен пароль SSH'):winssh.prepare(self.config)
+            prompt.assert_not_called()
+    def test_empty_password_mode_still_rejects_changed_host_key(self):
+        self.peer.password='';self.config['ssh_auth']='empty-password'
+        other=paramiko.RSAKey.generate(2048)
+        (self.folder/'known_hosts').write_text(winssh.host_id(self.config)+' '+other.get_name()+' '+other.get_base64()+'\n')
+        with self.assertRaisesRegex(RuntimeError,'изменился'):winssh.run(self.config,'id -u')
+        self.assertEqual(self.peer.commands,[])
+    def test_windows_form_passes_empty_password_without_installing_keys(self):
+        from alisa_cli import state,ssh_setup
+        from unittest.mock import Mock
+        form=Mock();form.select.return_value='password';form.secret.return_value=''
+        form.text.side_effect=[self.config['host'],str(self.peer.port),'root']
+        self.peer.password=''
+        with patch.object(ssh_setup.sys,'platform','win32'),patch.object(state,'HOME',self.folder/'state'),patch.object(ssh_setup,'trust_host'),patch.object(ssh_setup,'install_key') as install:
+            result=ssh_setup.form(self.config,form)
+        install.assert_not_called();self.assertFalse(result['key_saved'])
+        self.assertEqual(self.config['ssh_auth'],'empty-password')
+        self.assertEqual(self.peer.commands,['id -u'])
+    def test_windows_form_uses_existing_key_without_installing_a_new_one(self):
+        from alisa_cli import state,ssh_setup
+        from unittest.mock import Mock
+        key=self.folder/'existing-key';key.write_text('synthetic-only-key')
+        self.config['ssh_auth']='password'
+        form=Mock();form.select.return_value='key'
+        form.text.side_effect=[self.config['host'],str(self.peer.port),'root',str(key)]
+        with patch.object(ssh_setup.sys,'platform','win32'),patch.object(state,'HOME',self.folder/'state'),patch.object(ssh_setup,'trust_host'),patch.object(Station,'text',return_value='0\n'),patch.object(ssh_setup,'install_key') as install,patch.object(winssh,'use_password') as password:
+            result=ssh_setup.form(self.config,form)
+        install.assert_not_called();password.assert_not_called();form.secret.assert_not_called()
+        self.assertTrue(result['key_saved']);self.assertEqual(self.config['identity'],str(key))
+        self.assertNotIn('ssh_auth',self.config)
     def test_real_ssh_roundtrip_large_upload_has_exact_digest(self):
         data=bytes(range(256))*16384
         result=winssh.run(self.config,'digest',data,password='synthetic-only-password')
@@ -115,6 +188,19 @@ class SSHTests(unittest.TestCase):
         with self.assertRaises(OSError):socket.create_connection(('127.0.0.1',port),timeout=.3)
 
 class BrowserAndPackageTests(unittest.TestCase):
+    def test_explicit_identity_overrides_saved_password_mode(self):
+        from alisa_cli import cli
+        config=defaults('native');config.update(host='192.0.2.1',ssh_auth='password')
+        with patch.object(cli.sys,'platform','win32'),patch.object(cli,'load',return_value=config),patch.object(cli.runtime,'status',return_value={}) as status,patch.object(cli,'show'):
+            self.assertEqual(cli.main(['native','status','--identity','existing-key']),0)
+        self.assertEqual(status.call_args.args[0]['identity'],'existing-key')
+        self.assertNotIn('ssh_auth',status.call_args.args[0])
+    def test_updater_does_not_handoff_a_memory_only_password(self):
+        from alisa_cli import updates,runtime
+        config=defaults('native');config.update(host='192.0.2.1',installed=True,ssh_auth='password')
+        with patch.object(updates.sys,'platform','win32'),patch.object(updates,'load',return_value=config),patch.object(runtime,'status') as status:
+            with self.assertRaisesRegex(RuntimeError,'Непустой пароль хранится только'):updates.mode_plan()
+        status.assert_not_called()
     def test_reinstall_keeps_state_unknown_files_and_previous_copy(self):
         source=Path(__file__).resolve().parents[1]/'install.py'
         spec=importlib.util.spec_from_file_location('windows_installer_updates',source);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
