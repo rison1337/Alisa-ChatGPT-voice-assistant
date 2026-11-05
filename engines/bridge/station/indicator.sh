@@ -5,8 +5,9 @@ LED=${ALICE_LED_ROOT:-/sys/class/leds/plum}
 # Lite 1 (yandex,station-micro) has the same 3x3 ring under another name
 # and only a software microphone mute, so there is no switch to report.
 # Mini 2 (yandex,station-mini2) has a 6-zone ring; its momentary mute button
-# is handled by maind before VQE, so there is no switch line to read here.
+# is handled by maind before VQE; its latched state is read separately below.
 no_mute_switch=0
+mini2_mute=0
 if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ]; then
     if [ -e /sys/class/leds/micro:red:ring1 ]; then
         LED=/sys/class/leds/micro
@@ -21,7 +22,7 @@ zones='1 2 3'
 zone_map='1 2 3'
 case "$LED" in
     */micro) no_mute_switch=1 ;;
-    */mini2) no_mute_switch=1; zones='1 2 3 4 5 6'; zone_map='1 1 2 2 3 3' ;;
+    */mini2) mini2_mute=1; zones='1 2 3 4 5 6'; zone_map='1 1 2 2 3 3' ;;
 esac
 MUTE_GPIO=${ALICE_MUTE_GPIO_STATUS:-/sys/kernel/debug/gpio}
 owned=0
@@ -44,6 +45,24 @@ decode_frame() {
     printf '%s' "$task_led_decoded"
 }
 mute_status() {
+    if [ "$mini2_mute" = 1 ]; then
+        # Mini 2 exposes its latched state on GPIOZ_3 (gpio-414), not a
+        # mute-switch label. The native client inherits a compatibility
+        # listing; this separate reader must see the physical debugfs file.
+        LD_PRELOAD= awk '
+            /^[[:space:]]*gpio-414[[:space:]]+\(/ {
+                count++
+                tail=$0
+                sub(/^.*\)[[:space:]]*/, "", tail)
+                n=split(tail, bits, /[[:space:]]+/)
+                if (n < 2 || bits[1] != "in" || (bits[2] != "hi" && bits[2] != "lo")) bad=1
+                for (i=3; i<=n; i++) if (bits[i] == "hi" || bits[i] == "lo") bad=1
+                state=(bits[2] == "hi" ? 1 : 0)
+            }
+            END { if (count != 1 || bad) exit 2; exit state }
+        ' "$MUTE_GPIO" 2>/dev/null
+        return $?
+    fi
     # Verified Plum device tree: gpio-keys/mute-switch is active-low.
     # Reading the labelled GPIO also works while LED triggers are detached.
     [ -r "$MUTE_GPIO" ] || return 2
@@ -152,13 +171,26 @@ restore_frame() {
 release() {
     if [ "$owned" = 1 ]; then
         task_led_current=$(frame)
-        [ "$task_led_current" != "$painted" ] || restore_frame
+        if [ "$mini2_mute" = 1 ]; then
+            # Return triggers without brightness writes while muted/unknown.
+            # Firmware owns the warning, even if it matches our last frame.
+            if mute_status; then :; else
+                task_led_release_mute=$?
+                if [ "$task_led_release_mute" = 1 ]; then
+                    [ "$task_led_current" != "$painted" ] || restore_frame
+                fi
+            fi
+        else
+            [ "$task_led_current" != "$painted" ] || restore_frame
+        fi
         restore_triggers
         owned=0
         printf 'STOCK\n'
     fi
 }
-trap 'release; exit 0' TERM INT HUP
+# A signal can interrupt IFS= read with an empty temporary IFS. Restore
+# splitting before walking the physical zones and saved trigger list.
+trap 'IFS=" "; release; exit 0' TERM INT HUP
 trap release EXIT
 while IFS= read -r -t 2 task_led_command; do
     case "$task_led_command" in

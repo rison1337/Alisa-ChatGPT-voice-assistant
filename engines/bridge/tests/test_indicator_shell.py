@@ -27,7 +27,7 @@ class BridgeRing(unittest.TestCase):
         (clock / 'brightness').write_text('7\n')
         (clock / 'trigger').write_text('[none] quasar\n')
         gpio = root / 'gpio'
-        gpio.write_text('gpio-0 ( |mute-switch ) in hi\n' if prefix == 'plum' else 'software mute; no switch\n')
+        gpio.write_text('gpio-0 ( |mute-switch ) in hi\n' if prefix == 'plum' else ' gpio-414 (GPIOZ_3 | ) in hi\n' if prefix == 'mini2' else 'software mute; no switch\n')
         env = {**os.environ, 'ALICE_LED_ROOT': str(root / prefix), 'ALICE_MUTE_GPIO_STATUS': str(gpio)}
         process = subprocess.Popen(['bash', str(SCRIPT)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True, env=env)

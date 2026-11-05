@@ -106,7 +106,7 @@ class Mini2Ring(unittest.TestCase):
         (clock / 'brightness').write_text('7\n')
         (clock / 'trigger').write_text('[none] quasar\n')
         gpio = root / 'gpio'
-        gpio.write_text('software mute; no switch\n')
+        gpio.write_text(' gpio-414 (GPIOZ_3 | ) in hi\n')
         env = {**os.environ, 'ALICE_LED_ROOT': str(prefix), 'ALICE_MUTE_GPIO_STATUS': str(gpio),
                'ALISA_LED_STYLE': style, 'ALISA_LISTEN_LED': listen, 'ALISA_LISTEN_LED_FILE': ''}
         process = subprocess.Popen(['bash', str(ROOT / 'assets/native/indicator.sh')],

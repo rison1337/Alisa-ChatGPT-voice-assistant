@@ -25,7 +25,7 @@ class Station2Integration(unittest.TestCase):
         return value
 
     def test_shipped_bundle_loads_and_gain_is_isolated_to_station2(self):
-        for model in ('lite1','lite2','yandexmidi'):
+        for model in ('lite1','lite2','mini2','yandexmidi'):
             with self.subTest(model=model),patch.object(install,'Station') as station:
                 station.return_value.text.side_effect=stock
                 files=install.native_files(station.return_value,model)
@@ -70,7 +70,7 @@ class Station2Integration(unittest.TestCase):
             else:self.assertEqual(value['led'],'red')
 
     def test_other_models_keep_their_lighting_preferences(self):
-        for model in ('lite1','lite2'):
+        for model in ('lite1','lite2','mini2'):
             value=self.config();value['listen_led']=True
             firmware.apply_model(value,model)
             self.assertEqual(value['led'],'rainbow');self.assertTrue(value['listen_led'])

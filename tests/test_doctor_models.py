@@ -18,10 +18,10 @@ def output(compatible,maind,vqe,tools=('aplay','base64','sha256sum')):
   *['/usr/bin/'+t for t in tools]])+'\n'
 
 class Models(unittest.TestCase):
- def check(self,mode,text):
+ def check(self,mode,text,platform='linux'):
   c=state.defaults(mode);c['host']='192.0.2.10'
   with patch.object(doctor.Station,'text',return_value=text),patch.object(doctor.shutil,'which',return_value='/usr/bin/x'),\
-    patch.object(doctor.subprocess,'run',return_value=subprocess.CompletedProcess([],0)):
+    patch.object(doctor.subprocess,'run',return_value=subprocess.CompletedProcess([],0)),patch.object(doctor.sys,'platform',platform):
    return doctor.inspect(c)
  def test_lite1_verified_build_passes_native_without_socat(self):
   r=self.check('native',output('yandex,station-micro',*LITE1))
@@ -88,5 +88,13 @@ class Models(unittest.TestCase):
  def test_entware_socat_path_counts_as_installed(self):
   r=self.check('bridge',output('yandex,station-mini2',*MINI2)+'/data/opt/entware/bin/socat\n')
   self.assertEqual(r['station_missing'],[]);self.assertTrue(r['ok'])
+
+ def test_windows_accepts_mini2_native_but_requires_a_linux_audio_backend_for_bridge(self):
+  text=output('yandex,station-mini2',*MINI2,tools=('aplay','base64','sha256sum','socat'))
+  with patch('alisa_cli.windows.missing',return_value=[]):
+   self.assertTrue(self.check('native',text,platform='win32')['ok'])
+   bridge=self.check('bridge',text,platform='win32')
+  self.assertFalse(bridge['ok'])
+  self.assertIn('Windows audio backend (следующий этап)',bridge['host_missing'])
 
 if __name__=='__main__':unittest.main()

@@ -78,7 +78,7 @@ class LightingPreview(unittest.TestCase):
             for color in ('red','green','blue'):
                 path=root/f'leds/mini2:{color}:ring{zone}';path.mkdir(parents=True)
                 (path/'brightness').write_text('0\n');(path/'trigger').write_text('none [quasar]\n');paths.append(path)
-        gpio=root/'gpio';gpio.write_text('software mute; no switch\n')
+        gpio=root/'gpio';gpio.write_text(' gpio-414 (GPIOZ_3 | ) in hi\n')
         class RingStation:
             def __init__(self,config):pass
             def run(self,command,**kwargs):

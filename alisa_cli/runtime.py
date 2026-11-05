@@ -21,11 +21,13 @@ def bridge_command(config,action,**kwargs):
 
 def status(config):
     if config['mode']=='native':
-        r=Station(config).run(NATIVE+'/bin/alisa-standalone status',check=False)
+        binary=shlex.quote(NATIVE+'/bin/alisa-standalone')
+        # Check absence separately: an existing ELF can also exit 127 when
+        # its loader or a shared library is unavailable. Keep that failure.
+        missing=json.dumps({'phase':'stopped','agent_connected':False,'error':''})
+        command=f"if [ ! -e {binary} ] && [ ! -L {binary} ]; then printf '%s\\n' {shlex.quote(missing)}; else {binary} status; fi"
+        r=Station(config).run(command,check=False)
         if r.returncode==255:check_result(r)
-        # A fresh station has no client binary yet; report stopped so the
-        # installer can plan its first copy instead of failing on code 127.
-        if r.returncode==127:return {'mode':'native','phase':'stopped','agent_connected':False,'error':''}
         try:result=json.loads(r.stdout)
         except ValueError:
             check_result(r)
