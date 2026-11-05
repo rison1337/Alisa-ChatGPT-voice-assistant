@@ -57,6 +57,11 @@ def require(config,report=None,warn=True):
     if report['host_missing']:reasons.append('на компьютере не хватает: '+', '.join(report['host_missing']))
     if report['station_missing']:reasons.append('на колонке не хватает: '+', '.join(report['station_missing']))
     if not report['ok'] and not reasons:reasons.append('не пройдена обязательная проверка компонентов')
+    if len(reasons)==1 and report['host_missing'] and set(report['host_missing'])<= {'Xvfb','xauth'}:
+        # Keep the new dependency diagnosis visible through the updater's
+        # fixed public-error channel, before it stops or replaces anything.
+        from .errors import PublicError
+        raise PublicError('login_display_missing')
     if reasons:raise RuntimeError('Установка остановлена: '+('; '.join(reasons))+'.')
     if warn and not report['firmware_abi_supported']:
         from . import ui

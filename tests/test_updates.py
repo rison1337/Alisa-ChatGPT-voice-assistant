@@ -296,6 +296,7 @@ class WorkerPreflight(unittest.TestCase):
     def test_child_error_only_uses_known_public_codes(self):
         worker=self.worker()
         for data,expected in [(b'{"update_error":"ssh_unreachable","secret":"private"}','Нет подключения SSH'),
+                              (b'{"update_error":"login_display_missing"}','Xvfb, xauth'),
                               (b'{"update_error":"private"}',None),(b'private',None)]:
             with patch.object(worker.subprocess,'run',return_value=subprocess.CompletedProcess([],1,stdout=data,stderr=b'private')):
                 with self.assertRaises(RuntimeError) as caught:worker.execute(ROOT,'linux-x86_64',['native','status'],'проверка')

@@ -35,7 +35,9 @@ class Models(unittest.TestCase):
   with tempfile.TemporaryDirectory() as folder,patch.object(dependencies,'ROOT',Path(folder)),patch.object(doctor.sys,'platform','linux'),patch.object(doctor.Station,'text',return_value=output('yandex,station-mini2',*MINI2)),patch.object(doctor.shutil,'which',side_effect=lambda tool:None if tool in ('Xvfb','xauth') else '/usr/bin/'+tool):
    report=doctor.inspect(c)
   self.assertEqual(report['host_missing'],['Xvfb','xauth']);self.assertFalse(report['ok'])
-  with self.assertRaisesRegex(RuntimeError,'Xvfb, xauth'):doctor.require(c,report)
+  from alisa_cli.errors import PublicError
+  with self.assertRaisesRegex(PublicError,'Xvfb, xauth') as caught:doctor.require(c,report)
+  self.assertEqual(caught.exception.code,'login_display_missing')
  def test_lite1_with_other_hashes_is_unverified_but_installable(self):
   r=self.check('native',output('yandex,station-micro',doctor.MAIND,doctor.VQE))
   self.assertFalse(r['firmware_abi_supported']);self.assertTrue(r['ok']);self.assertTrue(r['warnings'])

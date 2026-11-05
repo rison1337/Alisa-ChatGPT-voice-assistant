@@ -59,15 +59,15 @@ case "${1:-}" in
         "$BASE/profile.sh" bridge
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
-            # Prefer the current IPv4 route for ICE. A dual-stack socket can
-            # spend longer than the call deadline on unusable IPv6 STUN (for
-            # example a split-tunnel DNS reply of ::). Keep an explicit VPN
-            # binding, and let IPv6-only networks retain the normal fallback.
+            # If IPv4 is available, avoid dual-stack STUN delays. Bind the
+            # IPv4 wildcard, not today's interface address: each new ICE agent
+            # then gathers current interfaces after Wi-Fi/DHCP changes. Keep
+            # explicit VPN bindings and the IPv6-only fallback unchanged.
             if [ -z "${ALISA_ICE_BIND_ADDRESS:-}" ]; then
                 task_ice_address=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="src") {print $(i+1);exit}}') || task_ice_address=''
                 case "$task_ice_address" in
                     ''|*[!0-9.]*) ;;
-                    *) export ALISA_ICE_BIND_ADDRESS="$task_ice_address" ;;
+                    *) export ALISA_ICE_BIND_ADDRESS=0.0.0.0 ;;
                 esac
             fi
             # Stations whose debugfs listing lacks the client's "|mute-switch "

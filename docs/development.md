@@ -120,3 +120,22 @@ alisa update --archive /path/to/alisa-voice-linux.tar.gz --version X.Y.Z --yes
 `scripts/update_worker.py` продолжает работу вне заменяемой папки. Windows ожидает завершения предыдущего процесса; Linux использует `exec`. После замены приложения обновляются компоненты установленных режимов. Ошибка вызывает возврат прежнего приложения и попытку восстановления компонентов; неполный откат отражается как `recovery_needed`. Временный пакет остаётся до успешной проверки результата и освобождения его DLL. Предыдущие папки приложения не удаляются автоматически.
 
 Тесты `test_updates.py` проверяют реальную файловую транзакцию, подменённый релиз, отказ/отключение уведомлений и worker с имитацией колонки. `test_terminal_ui.py` проверяет выход из полноэкранного меню до замены процесса. Эти проверки дополняют прогон в настоящей Windows, а не заменяют его.
+
+
+## Проверка IPv4 ICE без колонки
+
+Дополнительная проверка использует закреплённую версию libjuice из `docs/native-dependencies.json` (после загрузки исходников). Она создаёт настоящие ICE-агенты без STUN/TURN-серверов и без подключения к ChatGPT. Список интерфейсов подменяется только внутри тестового процесса: при смене адреса новый агент должен возвращать новый IPv4-кандидат. IPv6 и `0.0.0.0` не должны попадать в кандидаты.
+
+```bash
+cmake -S engines/native/research/upstream/libdatachannel/deps/libjuice \
+  -B build/ice-libjuice -G Ninja -DNO_TESTS=ON -DNO_SERVER=ON \
+  -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build/ice-libjuice --parallel 4
+clang -std=c11 -O2 -DJUICE_STATIC \
+  -I engines/native/research/upstream/libdatachannel/deps/libjuice/include \
+  tests/check_ice_ipv4_wildcard.c build/ice-libjuice/libjuice.a -pthread \
+  -Wl,--wrap=getifaddrs,--wrap=freeifaddrs,--wrap=bind -o build/check-ice-ipv4
+build/check-ice-ipv4
+```
+
+Проверка требует Linux, CMake, Ninja и Clang; зависимости нужны разработчику, а не установленному клиенту. Изменений сетевых интерфейсов, колонок и аккаунтов она не делает. Основной `test_native_ice_binding.py` дополнительно запускает настоящий `run.sh`, проверяет два запроса одного живого процесса после смены маршрута и сохранение явной VPN-привязки.
