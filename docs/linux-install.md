@@ -27,9 +27,11 @@ CLI предлагает установить отсутствующие ком�
 
 | Семейство | Общие компоненты | Дополнительно для моста |
 |---|---|---|
-| Arch / CachyOS / Manjaro | openssh, chromium | libpulse, xorg-server-xvfb, xorg-xauth, opus |
-| Debian и системы с apt-get | openssh-client, chromium | pulseaudio-utils, xvfb, xauth, libopus0 |
-| Fedora и системы с dnf | openssh-clients, chromium | pulseaudio-utils, xorg-x11-server-Xvfb, xorg-x11-xauth, opus |
+| Arch / CachyOS / Manjaro | openssh, chromium, xorg-server-xvfb, xorg-xauth | libpulse, opus |
+| Debian и системы с apt-get | openssh-client, chromium, xvfb, xauth | pulseaudio-utils, libopus0 |
+| Fedora и системы с dnf | openssh-clients, chromium, xorg-x11-server-Xvfb, xorg-x11-xauth | pulseaudio-utils, opus |
+
+Xvfb и xauth нужны обоим режимам для скрытой проверки и сохранения сессии после обычного входа в Chromium. Они проверяются до открытия окна входа. Если в Linux 0.3.5 после успешного входа появляется «Вход ещё не подтверждён», проверьте наличие этих компонентов; в Debian установите их командой `sudo apt-get install xvfb xauth` и повторите `alisa native login change`. При обновлении старой установки отсутствие этих пакетов останавливает проверку до замены программы и остановки клиента; установите пакеты по таблице выше и повторите обновление.
 
 Нужен работающий звуковой сервер PipeWire/PulseAudio. Установщик добавляет клиентские утилиты, не заменяет существующий звуковой сервер.
 

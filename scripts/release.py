@@ -16,6 +16,7 @@ def files():
     selected+=list((ROOT/'assets').rglob('*'))
     selected+=list((ROOT/'station').glob('*'))
     selected+=list((ROOT/'tests').glob('test_*.py'))
+    selected+=list((ROOT/'tests').glob('check_*.c'))
     selected+=list((ROOT/'engines/native/station').glob('*.c'))
     selected+=list((ROOT/'engines/native/station').glob('*.h'))
     selected+=list((ROOT/'docs').glob('*.md'))

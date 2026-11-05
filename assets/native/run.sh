@@ -59,6 +59,17 @@ case "${1:-}" in
         "$BASE/profile.sh" bridge
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
+            # If IPv4 is available, avoid dual-stack STUN delays. Bind the
+            # IPv4 wildcard, not today's interface address: each new ICE agent
+            # then gathers current interfaces after Wi-Fi/DHCP changes. Keep
+            # explicit VPN bindings and the IPv6-only fallback unchanged.
+            if [ -z "${ALISA_ICE_BIND_ADDRESS:-}" ]; then
+                task_ice_address=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="src") {print $(i+1);exit}}') || task_ice_address=''
+                case "$task_ice_address" in
+                    ''|*[!0-9.]*) ;;
+                    *) export ALISA_ICE_BIND_ADDRESS=0.0.0.0 ;;
+                esac
+            fi
             # Stations whose debugfs listing lacks the client's "|mute-switch "
             # line would otherwise silence the microphone. Lite 1 has no switch
             # at all and gets a static always-on listing; Mini 2 has a momentary

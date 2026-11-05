@@ -27,6 +27,17 @@ class Models(unittest.TestCase):
   r=self.check('native',output('yandex,station-micro',*LITE1))
   self.assertEqual(r['model'],'lite1');self.assertTrue(r['plum']);self.assertTrue(r['firmware_abi_supported'])
   self.assertEqual(r['station_missing'],[]);self.assertTrue(r['ok'])
+ def test_native_doctor_rejects_missing_session_import_dependencies(self):
+  import tempfile
+  from pathlib import Path
+  from alisa_cli import dependencies
+  c=state.defaults('native');c['host']='192.0.2.10'
+  with tempfile.TemporaryDirectory() as folder,patch.object(dependencies,'ROOT',Path(folder)),patch.object(doctor.sys,'platform','linux'),patch.object(doctor.Station,'text',return_value=output('yandex,station-mini2',*MINI2)),patch.object(doctor.shutil,'which',side_effect=lambda tool:None if tool in ('Xvfb','xauth') else '/usr/bin/'+tool):
+   report=doctor.inspect(c)
+  self.assertEqual(report['host_missing'],['Xvfb','xauth']);self.assertFalse(report['ok'])
+  from alisa_cli.errors import PublicError
+  with self.assertRaisesRegex(PublicError,'Xvfb, xauth') as caught:doctor.require(c,report)
+  self.assertEqual(caught.exception.code,'login_display_missing')
  def test_lite1_with_other_hashes_is_unverified_but_installable(self):
   r=self.check('native',output('yandex,station-micro',doctor.MAIND,doctor.VQE))
   self.assertFalse(r['firmware_abi_supported']);self.assertTrue(r['ok']);self.assertTrue(r['warnings'])

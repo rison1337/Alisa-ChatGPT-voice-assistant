@@ -4,6 +4,20 @@ from unittest.mock import patch
 from alisa_cli import accounts,login_browser,state,ui
 
 class OwnerBrowser(unittest.TestCase):
+ def setUp(self):
+  patcher=patch.object(accounts,'require_login_tools')
+  self.login_tools=patcher.start();self.addCleanup(patcher.stop)
+
+ def test_missing_import_tools_stop_before_browser_or_session_changes(self):
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder);destination=root/'native/session.json';destination.parent.mkdir();destination.write_text('{"saved":"previous"}')
+   self.login_tools.side_effect=RuntimeError('Missing Xvfb')
+   with patch.object(accounts,'HOME',root),patch.object(accounts,'open_window') as browser,patch.object(accounts.subprocess,'run') as run,patch.object(accounts,'Station') as station:
+    with self.assertRaisesRegex(RuntimeError,'Xvfb'):accounts.login(state.defaults('native'),change=True)
+   browser.assert_not_called();run.assert_not_called();station.assert_not_called()
+   self.assertEqual(destination.read_text(),'{"saved":"previous"}')
+   self.assertEqual(list(destination.parent.iterdir()),[destination])
+
  def test_bridge_readiness_rejects_challenge_and_login_titles(self):
   for title in ['Just a moment... - Chromium','Log in - ChatGPT - Chromium','Один момент…','']:
    self.assertFalse(login_browser.login_title_ready(title))
