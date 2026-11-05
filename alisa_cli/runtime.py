@@ -21,14 +21,23 @@ def bridge_command(config,action,**kwargs):
 
 def status(config):
     if config['mode']=='native':
-        r=Station(config).run(NATIVE+'/bin/alisa-standalone status',check=False)
+        binary=shlex.quote(NATIVE+'/bin/alisa-standalone')
+        # Check absence separately: an existing ELF can also exit 127 when
+        # its loader or a shared library is unavailable. Keep that failure.
+        missing=json.dumps({'phase':'stopped','agent_connected':False,'error':''})
+        command=f"if [ ! -e {binary} ] && [ ! -L {binary} ]; then printf '%s\\n' {shlex.quote(missing)}; else {binary} status; fi"
+        r=Station(config).run(command,check=False)
         if r.returncode==255:check_result(r)
         try:result=json.loads(r.stdout)
         except ValueError:
             check_result(r)
             raise PublicError('station_reply_invalid') from None
         if not isinstance(result,dict):raise PublicError('station_reply_invalid')
-        if result.get('error')=='control_unavailable':result={'phase':'stopped','agent_connected':False,'error':''}
+        # Startup transients arrive with exit code 2 while the monitor creates
+        # the state directory. state_unavailable also survives as a sticky
+        # last-call error with exit 0; only the failed reply is transient.
+        transient=result.get('error')=='control_unavailable' or r.returncode==2 and result.get('error')=='state_unavailable'
+        if transient:result={'phase':'stopped','agent_connected':False,'error':''}
         else:
             check_result(r)
             if not isinstance(result.get('phase'),str):raise PublicError('station_reply_invalid')

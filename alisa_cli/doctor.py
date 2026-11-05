@@ -9,7 +9,7 @@ def windows_chromium():
 
 def inspect(config):
     s=Station(config)
-    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay socat base64 sha256sum ip; do command -v "$x" || true; done; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
+    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay base64 sha256sum ip; do command -v "$x" || true; done; command -v socat || command -v /data/opt/entware/bin/socat || true; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
     lines=s.text(script).replace('\x00',' ').splitlines()
     if len(lines)<3:raise RuntimeError('Колонка вернула неполный ответ SSH. Повторите проверку подключения.')
     root=lines[0].strip()=='0'
@@ -18,7 +18,7 @@ def inspect(config):
     pair=(hashes.get('/system/vendor/quasar/maind'),hashes.get('/system/vendor/quasar/libs/libyandex_evil.so'))
     firmware=classify(device_tree,pair)
     model=firmware['model'];compatible=model is not None
-    mode_supported=compatible and (config['mode']=='native' or model=='lite2')
+    mode_supported=compatible and (config['mode']=='native' or model in ('lite2','mini2'))
     missing=[tool for tool in ['ssh','chromium'] if not shutil.which(tool)]
     if sys.platform=='win32':
         from .windows import missing as windows_missing
@@ -47,8 +47,8 @@ def require(config,report=None,warn=True):
     report=report if report is not None else inspect(config)
     reasons=[]
     if not report['root']:reasons.append('нужны права root по SSH')
-    if not report['plum']:reasons.append('устройство не распознано как Станция Лайт 1, Лайт 2 или Станция 2')
-    if report.get('mode_supported') is False:reasons.append('эта модель пока поддерживается только в нативном режиме; мост доступен для Лайт 2')
+    if not report['plum']:reasons.append('устройство не распознано как Станция Лайт 1, Лайт 2, Мини 2 или Станция 2')
+    if report.get('mode_supported') is False:reasons.append('эта модель пока поддерживается только в нативном режиме; мост доступен для Лайт 2 и Мини 2')
     if not report.get('firmware_files_present',report['firmware_abi_supported']):reasons.append('не удалось прочитать maind и библиотеку VQE')
     if report.get('architecture', 'aarch64') not in ARCHITECTURES:reasons.append('архитектура колонки не поддерживается')
     if report['free_data_kib'] is None or report['free_data_kib']<=12000:reasons.append('на колонке нужно больше 12 МиБ свободного места')

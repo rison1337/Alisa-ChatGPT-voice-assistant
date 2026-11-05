@@ -4,11 +4,26 @@ set -efu
 LED=${ALICE_LED_ROOT:-/sys/class/leds/plum}
 # Lite 1 (yandex,station-micro) has the same 3x3 ring under another name
 # and only a software microphone mute, so there is no switch to report.
+# Mini 2 (yandex,station-mini2) has a 6-zone ring; its momentary mute button
+# is handled by maind before VQE; its latched state is read separately below.
 no_mute_switch=0
-if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ] && [ -e /sys/class/leds/micro:red:ring1 ]; then
-    LED=/sys/class/leds/micro
+mini2_mute=0
+if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ]; then
+    if [ -e /sys/class/leds/micro:red:ring1 ]; then
+        LED=/sys/class/leds/micro
+    elif [ -e /sys/class/leds/mini2:red:ring1 ]; then
+        LED=/sys/class/leds/mini2
+    fi
 fi
-case "$LED" in */micro) no_mute_switch=1 ;; esac
+# Frames carry 3 logical zones; zone_map gives the logical zone of each
+# physical one. Mini 2 doubles every logical zone onto a physical pair; its
+# clock LEDs (mini2:white:clock*) are never touched.
+zones='1 2 3'
+zone_map='1 2 3'
+case "$LED" in
+    */micro) no_mute_switch=1 ;;
+    */mini2) mini2_mute=1; zones='1 2 3 4 5 6'; zone_map='1 1 2 2 3 3' ;;
+esac
 MUTE_GPIO=${ALICE_MUTE_GPIO_STATUS:-/sys/kernel/debug/gpio}
 owned=0
 saved=''
@@ -30,6 +45,24 @@ decode_frame() {
     printf '%s' "$task_led_decoded"
 }
 mute_status() {
+    if [ "$mini2_mute" = 1 ]; then
+        # Mini 2 exposes its latched state on GPIOZ_3 (gpio-414), not a
+        # mute-switch label. The native client inherits a compatibility
+        # listing; this separate reader must see the physical debugfs file.
+        LD_PRELOAD= awk '
+            /^[[:space:]]*gpio-414[[:space:]]+\(/ {
+                count++
+                tail=$0
+                sub(/^.*\)[[:space:]]*/, "", tail)
+                n=split(tail, bits, /[[:space:]]+/)
+                if (n < 2 || bits[1] != "in" || (bits[2] != "hi" && bits[2] != "lo")) bad=1
+                for (i=3; i<=n; i++) if (bits[i] == "hi" || bits[i] == "lo") bad=1
+                state=(bits[2] == "hi" ? 1 : 0)
+            }
+            END { if (count != 1 || bad) exit 2; exit state }
+        ' "$MUTE_GPIO" 2>/dev/null
+        return $?
+    fi
     # Verified Plum device tree: gpio-keys/mute-switch is active-low.
     # Reading the labelled GPIO also works while LED triggers are detached.
     [ -r "$MUTE_GPIO" ] || return 2
@@ -57,7 +90,7 @@ active_trigger() {
 }
 triggers() {
     task_led_triggers=''
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             task_led_trigger=$(active_trigger "$LED:$task_led_color:ring$task_led_zone")
             task_led_triggers="$task_led_triggers $task_led_trigger"
@@ -68,7 +101,7 @@ triggers() {
 detach_triggers() {
     # Keep native wake/listening animations out of the entire GPT session,
     # including silent frames. The physical mute switch is checked separately.
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             printf 'none\n' > "$LED:$task_led_color:ring$task_led_zone/trigger"
         done
@@ -76,7 +109,7 @@ detach_triggers() {
 }
 restore_triggers() {
     set -- $saved_triggers
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             task_led_path="$LED:$task_led_color:ring$task_led_zone"
             task_led_current_trigger=$(active_trigger "$task_led_path")
@@ -91,7 +124,7 @@ restore_triggers() {
 }
 frame() {
     task_led_frame=''
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             IFS= read -r task_led_value < "$LED:$task_led_color:ring$task_led_zone/brightness"
             task_led_frame="$task_led_frame $task_led_value"
@@ -101,16 +134,30 @@ frame() {
 }
 paint() {
     set -- $1
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             printf '%s\n' "$1" > "$LED:$task_led_color:ring$task_led_zone/brightness"
             shift
         done
     done
 }
+# Expand a logical frame to the physical channels following zone_map.
+# Logical zones repeat in pairs on Mini 2 and map 1:1 elsewhere.
+map_frame() {
+    set -- $1
+    task_led_logical=1
+    task_led_mapped=''
+    for task_led_ref in $zone_map; do
+        while [ "$task_led_logical" -lt "$task_led_ref" ]; do
+            shift 3
+            task_led_logical=$((task_led_logical + 1))
+        done
+        task_led_mapped="$task_led_mapped $1 $2 $3"
+    done
+}
 restore_frame() {
     set -- $saved
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             task_led_path="$LED:$task_led_color:ring$task_led_zone"
             # A new owner must not lose its trigger to a saved zero brightness.
@@ -124,13 +171,26 @@ restore_frame() {
 release() {
     if [ "$owned" = 1 ]; then
         task_led_current=$(frame)
-        [ "$task_led_current" != "$painted" ] || restore_frame
+        if [ "$mini2_mute" = 1 ]; then
+            # Return triggers without brightness writes while muted/unknown.
+            # Firmware owns the warning, even if it matches our last frame.
+            if mute_status; then :; else
+                task_led_release_mute=$?
+                if [ "$task_led_release_mute" = 1 ]; then
+                    [ "$task_led_current" != "$painted" ] || restore_frame
+                fi
+            fi
+        else
+            [ "$task_led_current" != "$painted" ] || restore_frame
+        fi
         restore_triggers
         owned=0
         printf 'STOCK\n'
     fi
 }
-trap 'release; exit 0' TERM INT HUP
+# A signal can interrupt IFS= read with an empty temporary IFS. Restore
+# splitting before walking the physical zones and saved trigger list.
+trap 'IFS=" "; release; exit 0' TERM INT HUP
 trap release EXIT
 while IFS= read -r -t 2 task_led_command; do
     case "$task_led_command" in
@@ -139,6 +199,9 @@ while IFS= read -r -t 2 task_led_command; do
         0) release; continue ;;
         *) continue ;;
     esac
+    # Comparisons and painting below work on physical channels.
+    map_frame "$task_led_requested"
+    task_led_requested=$task_led_mapped
     if mute_status; then
         release
         continue

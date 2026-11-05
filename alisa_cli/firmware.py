@@ -11,6 +11,11 @@ BUILDS={
     'lite2':(('station-lite2','yandex,station-lite2','plum','yandex,prune'),[(MAIND,VQE)]),
     'lite1':(('yandex,station-micro',),[('2dad0ffc61ba73d15ea813b754d7a56866d0477c321dcad9138b8d06e14ddbf1',
                                        'df67c7ad9fb9f2f9c473ba2aaed7663a0e898a2c6622993e65d3b8834a0b3646')]),
+    # Yandex Station Mini 2: same Amlogic AXG platform as Lite 1. The pinned
+    # pair was read from the owner's unit (0.369.1.46.4793643989.20261020.299);
+    # its VQE library is byte-identical to the Lite 2 build.
+    'mini2':(('yandex,station-mini2',),
+             [('7ff114e08d46d48394f9d794f89dc941f3b217bdcd3ff1ef46f1cd80fada6ec1',VQE)]),
     # Yandex Station 2 (yandexmidi): the pinned pair is the firmware the model
     # was validated on (live voice dialog, one station). Any other build stays
     # 'unverified' and installs with the usual warning.
@@ -19,7 +24,7 @@ BUILDS={
                     'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')]),
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
-MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','yandexmidi':'Станция 2'}
+MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini2':'Станция Мини 2','yandexmidi':'Станция 2'}
 LIGHTING_UNAVAILABLE='Подсветка GPT недоступна для этой модели.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
          'но работа микрофона, звука и голосовых команд не гарантируется.')

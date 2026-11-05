@@ -28,7 +28,7 @@ def check_firmware(host):
     pair=tuple(ssh(host,'sha256sum '+path).decode().split()[0] for path in
                ['/system/vendor/quasar/maind','/system/vendor/quasar/libs/libyandex_evil.so'])
     report=classify(compatible,pair)
-    if not report['model']:raise RuntimeError('Only Station Lite 1, Lite 2 and Station 2 are supported')
+    if not report['model']:raise RuntimeError('Only Station Lite 1, Lite 2, Mini 2 and Station 2 are supported')
     if not report['firmware_files_present']:raise RuntimeError('Cannot read firmware components')
     if ssh(host,'uname -m').decode().strip() not in ARCHITECTURES:raise RuntimeError('Unsupported station architecture')
     for warning in report['warnings']:print(warning,file=sys.stderr)
