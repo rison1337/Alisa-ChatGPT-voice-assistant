@@ -59,6 +59,17 @@ case "${1:-}" in
         "$BASE/profile.sh" bridge
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
+            # Prefer the current IPv4 route for ICE. A dual-stack socket can
+            # spend longer than the call deadline on unusable IPv6 STUN (for
+            # example a split-tunnel DNS reply of ::). Keep an explicit VPN
+            # binding, and let IPv6-only networks retain the normal fallback.
+            if [ -z "${ALISA_ICE_BIND_ADDRESS:-}" ]; then
+                task_ice_address=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="src") {print $(i+1);exit}}') || task_ice_address=''
+                case "$task_ice_address" in
+                    ''|*[!0-9.]*) ;;
+                    *) export ALISA_ICE_BIND_ADDRESS="$task_ice_address" ;;
+                esac
+            fi
             # Stations whose debugfs listing lacks the client's "|mute-switch "
             # line would otherwise silence the microphone. Lite 1 has no switch
             # at all and gets a static always-on listing; Mini 2 has a momentary
