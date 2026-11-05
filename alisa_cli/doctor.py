@@ -1,6 +1,7 @@
 import json,shutil,subprocess,sys
 from .ssh import Station
 from .firmware import MAIND,VQE,BUILDS,ARCHITECTURES,WARNING,classify
+from .dependencies import login_missing
 
 def windows_chromium():
     if sys.platform!='win32':return None
@@ -20,12 +21,13 @@ def inspect(config):
     model=firmware['model'];compatible=model is not None
     mode_supported=compatible and (config['mode']=='native' or model in ('lite2','mini2'))
     missing=[tool for tool in ['ssh','chromium'] if not shutil.which(tool)]
+    missing+=login_missing()
     if sys.platform=='win32':
         from .windows import missing as windows_missing
         missing=windows_missing()
     if config['mode']=='bridge':
-        for tool in ['pactl','pacat','paplay','Xvfb','xauth']:
-            if not shutil.which(tool) and not (tool=='Xvfb' and (__import__('pathlib').Path(__file__).resolve().parents[1]/'engines/bridge/display-tools/usr/bin/Xvfb').exists()):missing.append(tool)
+        for tool in ['pactl','pacat','paplay']:
+            if not shutil.which(tool):missing.append(tool)
         if sys.platform!='linux':missing.append('Windows audio backend (следующий этап)')
         if not missing:
             if subprocess.run(['pactl','info'],capture_output=True).returncode:missing.append('работающий PipeWire/PulseAudio')
