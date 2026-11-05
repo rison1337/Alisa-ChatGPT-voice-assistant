@@ -48,11 +48,26 @@ saved_triggers=''
 painted=''
 blue=' 0 0 160 0 0 160 0 0 160'
 # The client sends dark frames whenever GPT is silent, i.e. while the owner
-# speaks and while GPT thinks. A soft cyan wave is an explicit preference;
-# the small flag is re-read so the CLI can change it without restarting audio.
+# speaks and while GPT thinks. Both the legacy cyan wave and the selected
+# effect during pauses are opt-in; preferences reload without restarting audio.
 listen=${ALISA_LISTEN_LED:-0}
 listen_file=${ALISA_LISTEN_LED_FILE-/data/opt/alisa-standalone/listen-led}
+scope_file=${ALISA_LED_SCOPE_FILE-/data/opt/alisa-standalone/led-scope}
 listening_enabled() {
+    task_led_style=''
+    if [ -n "$scope_file" ] && [ -r "$scope_file" ]; then
+        IFS=' ' read -r task_led_scope task_led_style task_led_extra < "$scope_file" || return 1
+        [ -z "$task_led_extra" ] || return 1
+        case "$task_led_scope" in
+            active)
+                case "$task_led_style" in
+                    rainbow|red|green|blue|purple|white|pulse-red|pulse-green|pulse-blue|pulse-purple|pulse-white) return 0 ;;
+                    *) return 1 ;;
+                esac ;;
+            speaking) task_led_style='' ;;
+            *) return 1 ;;
+        esac
+    fi
     task_led_listen=$listen
     if [ -n "$listen_file" ] && [ -r "$listen_file" ]; then
         IFS= read -r task_led_listen < "$listen_file" || return 1
@@ -63,13 +78,55 @@ listening_enabled() {
 }
 tick=0
 listening_frame() {
-    tick=$(( (tick + 1) % 16 ))
+    tick=$(( (tick + 1) % 48 ))
     task_led_decoded=''
+    if [ -n "$task_led_style" ]; then
+        selected_listening_frame
+        return
+    fi
     for task_led_zone in 0 5 10; do
         task_led_step=$(( (tick + task_led_zone) % 16 ))
         [ "$task_led_step" -le 8 ] || task_led_step=$(( 16 - task_led_step ))
         task_led_level=$(( 20 + task_led_step * 13 ))
         task_led_decoded="$task_led_decoded 0 $(( task_led_level / 2 )) $task_led_level"
+    done
+}
+# Integer-only animation at the client's 8 fps; no helper process per frame.
+selected_listening_frame() {
+    if [ "$task_led_style" = rainbow ]; then
+        for task_led_zone in 0 16 32; do
+            task_led_hue=$(( (tick + task_led_zone) % 48 ))
+            task_led_up=$(( (task_led_hue % 8) * 20 ))
+            task_led_down=$(( 160 - task_led_up ))
+            case $(( task_led_hue / 8 )) in
+                0) task_led_rgb="160 $task_led_up 0" ;;
+                1) task_led_rgb="$task_led_down 160 0" ;;
+                2) task_led_rgb="0 160 $task_led_up" ;;
+                3) task_led_rgb="0 $task_led_down 160" ;;
+                4) task_led_rgb="$task_led_up 0 160" ;;
+                5) task_led_rgb="160 0 $task_led_down" ;;
+            esac
+            task_led_decoded="$task_led_decoded $task_led_rgb"
+        done
+        return
+    fi
+    case "${task_led_style#pulse-}" in
+        red) task_led_rgb='160 0 0' ;;
+        green) task_led_rgb='0 160 0' ;;
+        blue) task_led_rgb='0 0 160' ;;
+        purple) task_led_rgb='120 0 120' ;;
+        white) task_led_rgb='100 100 100' ;;
+    esac
+    task_led_scale=16
+    case "$task_led_style" in
+        pulse-*) task_led_scale=$(( tick % 16 ))
+                 [ "$task_led_scale" -le 8 ] || task_led_scale=$(( 16 - task_led_scale ))
+                 task_led_scale=$(( 8 + task_led_scale )) ;;
+    esac
+    for task_led_zone in 1 2 3; do
+        for task_led_value in $task_led_rgb; do
+            task_led_decoded="$task_led_decoded $(( task_led_value * task_led_scale / 16 ))"
+        done
     done
 }
 decode_frame() {

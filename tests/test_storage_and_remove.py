@@ -55,3 +55,4 @@ class Removal(unittest.TestCase):
   def sizes(s,paths):seen.extend(paths);return {}
   with patch('alisa_cli.install.native_paths',return_value=[runtime.NATIVE+'/run.sh']),patch.object(uninstall.storage,'remote_sizes',side_effect=sizes):uninstall.plan(c)
   self.assertTrue(seen);self.assertTrue(all('/state/' not in p and '/dropbear/' not in p and '/.ssh/' not in p for p in seen))
+  self.assertIn(runtime.NATIVE+'/led-scope',seen)
