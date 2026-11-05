@@ -1,19 +1,19 @@
 {
   "schema": 1,
-  "model": "plum+micro+mini2+yandexmidi",
+  "model": "plum+micro+mini2+yandexmidi+bergamot",
   "architecture": "armhf",
   "audio_engine": "WebRTC NetEq",
-  "revision": 7,
+  "revision": 8,
   "files": {
     "native_agent.so": "00395cfb8b5dbb81bda7911b0f8d35eca064509781cbe208e671078da9283fd4",
     "vqe_tap.so": "b897088cf000590e2c452d47896d18b0d9483b56d360078bfdaa960b609bd28e",
     "tts_gate.so": "3cf0263a73e934704e0ecc4c7a5a633610b284dbccffdd6db8cc14e5e9384d32",
     "run.sh": "a98a8c38e4a904887fa83e9bf892c196390b592f8c661c47103e545b69e5c99c",
     "profile.sh": "796895d54657a9b60d82e547bebab5d8d5185aa5dea193fe9ff320035d86f77b",
-    "indicator.sh": "84ea34728753ebc9d4d13c27956ac81f3b80e9ae304c01f2f0c8a3a2579ce426",
+    "indicator.sh": "68d1476193d1b277d50f13cda48527c08ed87a76a3f5e2060b18104750e2601c",
     "mark.so": "86388c995080d76b95965d6e926304be19025b1e7f253c7ecf4c1f2919497845",
     "focus-0.wav": "6e49db6ecc812f32cb043fb3c02e4aea55329fa8df27724c5b4e2a76ed57c360",
-    "bin/alisa-standalone": "ad7a3e1a9fb5c004c89b4508b7f0c41cb126a232641ca0f2e939f28a4a266c57",
+    "bin/alisa-standalone": "1b2803d1454b04146e43c7d75419c6ff01d952133c99a11d881474c1216ed65e",
     "licenses/webrtc-LICENSE": "ab00a482b6a3902e40211b43c5d0441962ea99b6cc7c25c0f243fa270b78d482",
     "licenses/webrtc-PATENTS": "01462e2068d1a04c2274f3389773014c14ed9bc3446b28303543bd3e3c064145",
     "licenses/webrtc-AUTHORS": "6ee00fd8589352cfb7632d88ff22a60534f39a4690d40d1ae461ca4752a03a92",
@@ -29,6 +29,9 @@
     "licenses/openssl-LICENSE": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
     "licenses/opus-COPYING": "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551",
     "licenses/plog-LICENSE": "e4d01796524cbc13b1571a1f0914823c6a23b316ba039e7014f47a4eef7fd4c3",
-    "mute_gpio.so": "128941f6a8c33db8be1f52ddcf19a59c668251b2be47e97690cd881095c480b9"
+    "mute_gpio.so": "128941f6a8c33db8be1f52ddcf19a59c668251b2be47e97690cd881095c480b9",
+    "clock-eyes.sh": "98de14a23397e8121ddbe369d0a9b778f21c50f9bbad9c73c0e149f26677b47f",
+    "clock-display.sh": "070d0fdd497c087b88bd950986673972580d6860ca27424dba67c7596b26af9e",
+    "clock-isolation.sh": "bf9169e6078f2ed4a164b05a3ec33db0c24f7450a07a3a79c2e7d5901f73bf73"
   }
 }

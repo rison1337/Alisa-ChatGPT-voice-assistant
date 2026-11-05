@@ -8,8 +8,33 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class DisabledIndicator(unittest.TestCase):
+    def test_disabled_indicator_acknowledges_without_touching_device_files(self):
+        shell=shutil.which('sh')
+        if not shell and sys.platform=='win32':
+            candidate=Path('C:/Program Files/Git/bin/bash.exe')
+            if candidate.is_file():shell=str(candidate)
+        if not shell:self.skipTest('POSIX shell unavailable')
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);fb=root/'fb';fb.write_bytes(bytes(range(18)))
+            brightness=root/'brightness';brightness.write_bytes(b'42\n')
+            gpio=root/'gpio';gpio.write_bytes(b'malformed\n')
+            env={**os.environ,'ALISA_DISABLE_LED':'1','ALICE_PANEL_FB':str(fb),
+                 'ALICE_LED_ROOT':str(root/'missing'),'ALICE_MUTE_GPIO_STATUS':str(gpio),
+                 'ALISA_LISTEN_LED':'1'}
+            for name in ('assets/native/indicator.sh','engines/native/station/indicator.sh'):
+                result=subprocess.run([shell,(ROOT/name).as_posix()],
+                    input=b'B\nF 160 0 0 0 160 0 0 0 160\n0\n',
+                    env=env,capture_output=True,timeout=5)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout.replace(b'\r\n',b'\n'),b'BLUE\nFRAME\nSTOCK\n')
+                self.assertEqual(fb.read_bytes(),bytes(range(18)))
+                self.assertEqual(brightness.read_bytes(),b'42\n')
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'shell and file-backed LED fixture')

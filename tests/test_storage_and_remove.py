@@ -28,7 +28,9 @@ class Removal(unittest.TestCase):
   self.perform(False)
  def test_partial_deletion_rolls_back_program_files(self):
   self.perform(True)
- def perform(self,fail):
+ def test_native_runtime_is_stopped_when_local_installed_flag_is_false(self):
+  self.perform(False,installed=False)
+ def perform(self,fail,installed=True):
   files,value,account=self.fixture();original=dict(files);events=[];failed=[False]
   class Station:
    def run(self,command,**kwargs):
@@ -40,7 +42,7 @@ class Removal(unittest.TestCase):
      files.pop(path,None)
     return subprocess.CompletedProcess([],0,stdout=b'',stderr=b'')
    def put(self,path,data,mode=0o600):files[path]=data
-  config=state.defaults('native');config.update(host='192.0.2.2',installed=True)
+  config=state.defaults('native');config.update(host='192.0.2.2',installed=installed)
   with tempfile.TemporaryDirectory() as folder,patch.object(uninstall,'HOME',Path(folder)),patch.object(uninstall,'plan',return_value=value),patch.object(uninstall,'Station',return_value=Station()),patch.object(uninstall,'save'),patch.object(uninstall.runtime,'status',return_value={'agent_connected':False}),patch.object(uninstall.runtime,'stop',side_effect=lambda c:events.append('stop')),patch.object(uninstall.autostart,'set_enabled'),patch.object(uninstall.autostart,'station_flag'),patch.object(uninstall.autostart,'remove_owned_boot'):
    if fail:
     with self.assertRaisesRegex(RuntimeError,'simulated'):uninstall.remove(config,value)

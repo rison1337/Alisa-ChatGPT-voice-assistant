@@ -16,6 +16,10 @@ BUILDS={
     # its VQE library is byte-identical to the Lite 2 build.
     'mini2':(('yandex,station-mini2',),
              [('7ff114e08d46d48394f9d794f89dc941f3b217bdcd3ff1ef46f1cd80fada6ec1',VQE)]),
+    # Known Mini 3 firmware pair; hash recognition does not validate a full dialog.
+    'bergamot':(('yandex,bergamot','yandex,bergamot-evt1'),
+                [('d9ffda13e603f813ffa0de0f081ebb7b66e73a68fd44b387dadb1ecb2f0b534d',
+                  '9d7b5a8649e06ded729226ed1615802067f73ba50353ca08ae5a76b342fd25bf')]),
     # Yandex Station 2 (yandexmidi): the pinned pair is the firmware the model
     # was validated on (live voice dialog, one station). Any other build stays
     # 'unverified' and installs with the usual warning.
@@ -24,7 +28,8 @@ BUILDS={
                     'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')]),
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
-MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini2':'Станция Мини 2','yandexmidi':'Станция 2'}
+MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini2':'Станция Мини 2','yandexmidi':'Станция 2',
+             'bergamot':'Станция Мини 3'}
 LIGHTING_UNAVAILABLE='Подсветка GPT недоступна для этой модели.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
          'но работа микрофона, звука и голосовых команд не гарантируется.')

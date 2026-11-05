@@ -24,7 +24,9 @@ def entries(mode,page,config=None):
         values=[('Голосовые фразы',('settings','phrases'))]
         if supports_lighting(config.get('model')):values.append(('Подсветка','@lighting' if mode=='native' else ('settings','led')))
         if mode=='native':
+            if config.get('model')=='bergamot':values.append(('Дисплей GPT',('settings','display')))
             values.append(('Голос GPT',('voice',None)))
+            values.append(('STUN: '+('отключён' if config.get('disable_stun',False) else 'включён'),('settings','stun')))
         values+=auto_entries(mode,config)
     elif page=='lighting':
         values=[('Цвет и анимация',('settings','led')),
@@ -66,7 +68,7 @@ def run(mode,execute,start_page='main'):
     def inline(choice):
         if isinstance(choice,str):return True
         action,operation=choice
-        return action in ('toggle','help','doctor','network','storage','status','start','stop','verify') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off')) or (action=='update' and operation in ('ask-on','ask-off')) or (action=='settings' and operation in ('listen-on','listen-off'))
+        return action in ('toggle','help','doctor','network','storage','status','start','stop') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off')) or (action=='update' and operation in ('ask-on','ask-off')) or (action=='settings' and operation in ('listen-on','listen-off'))
     def location(context):return next(key for key,value in titles.items() if value==context)
     def read_request(context,choice):
         if choice=='back':return None
@@ -112,6 +114,8 @@ def run(mode,execute,start_page='main'):
                      'network':'Проверяю доступность ChatGPT…','storage':'Считаю свободное место…','help':'Открываю описание установки…'}
             return ui.FocusContent(describe(waiting[request[0]],choice),True)
         if choice=='@settings':return ui.FocusContent(phrase_summary()+'\n\nПодсветка: '+led_name()+'\n\n'+auto_summary())
+        if choice==('settings','display'):return ui.FocusContent('Дисплей во время GPT: '+('Штатные часы' if configuration.get('display','eyes')=='clock' else 'Анимированные глаза')+'\n\nВыбор с предпросмотром на Мини 3. После предпросмотра возвращаются часы. Выбор применяется со следующего разговора GPT.')
+        if choice==('settings','stun'):return ui.FocusContent('STUN: '+('отключён' if configuration.get('disable_stun',False) else 'включён')+'\n\nСтандартный режим — STUN включён. При ice_gather_timeout можно попробовать отключить его. Результат зависит от сети. Изменение применяется после перезапуска GPT.')
         if choice==('settings','phrases'):return ui.FocusContent(phrase_summary())
         if choice=='@lighting' or choice==('settings','led-scope'):return ui.FocusContent('Подсветка: '+led_name()+'\n'+LED_SCOPE_NAMES[configuration.get('led_scope','speaking')]+'\n\nПо умолчанию выбранный эффект включён только во время ответа GPT. Можно также включить его во время прослушивания и ожидания ответа, пока чат открыт. При выключенном микрофоне приоритет остаётся у штатной индикации.')
         if choice==('settings','led'):return ui.FocusContent('Подсветка: '+led_name())

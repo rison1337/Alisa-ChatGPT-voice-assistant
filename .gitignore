@@ -21,3 +21,6 @@ __pycache__/
 /windows-package.json
 /assets/vpn/windows-amd64/
 /windows/source-files.json
+
+# Private device settings, research and local test instructions.
+/.local/

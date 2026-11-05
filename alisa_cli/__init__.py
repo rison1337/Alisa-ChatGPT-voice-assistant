@@ -1,2 +1,2 @@
-"""Mode-separated installer for rooted Station Lite 1/2, Mini 2 and Station 2."""
-__version__='0.3.6'
+"""Mode-separated installer for rooted Station Lite 1/2, Mini 2/3 and Station 2."""
+__version__='0.3.7'

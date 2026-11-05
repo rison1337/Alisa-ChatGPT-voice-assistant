@@ -12,7 +12,7 @@ def plan(config):
         paths=native_paths()
     else:paths=list(storage.payload(config,station))
     if config['mode']=='native':
-        paths += [runtime.NATIVE+'/commands.txt',runtime.NATIVE+'/runtime.env',runtime.NATIVE+'/listen-led',runtime.NATIVE+'/led-scope',
+        paths += [runtime.NATIVE+'/commands.txt',runtime.NATIVE+'/runtime.env',runtime.NATIVE+'/listen-led',runtime.NATIVE+'/led-scope',runtime.NATIVE+'/display-mode',
                   runtime.TOOLS+'/xray',runtime.TOOLS+'/sing-box',runtime.TOOLS+'/vpn-required',
                   runtime.TOOLS+'/native-autostart',runtime.TOOLS+'/vpn-autostart']
     existing=storage.remote_sizes(station,paths)
@@ -42,7 +42,10 @@ def remove(config,value=None):
     # Stop and restore stock Alice before removing any executable/profile.
     was_running=runtime.status(config).get('agent_connected') if config['mode']=='native' else runtime.status(config).get('phase')=='running'
     vpn_running=config['mode']=='native' and station.run(runtime.TOOLS+'/vpn.sh status',check=False).returncode==0
-    if config.get('installed'):runtime.stop(config)
+    # Local state can predate a manual deployment. Stop an available native
+    # runtime before deleting its scripts even when installed is false.
+    native_runtime_present=config['mode']=='native' and runtime.NATIVE+'/run.sh' in value['paths']
+    if config.get('installed') or was_running or native_runtime_present:runtime.stop(config)
     autostart.set_enabled(config,False)
     if config['mode']=='native':
         station.run(runtime.TOOLS+'/vpn.sh stop',check=False)
