@@ -1,11 +1,16 @@
 """Temporary LED demo over one SSH stream, with the firmware mute guard."""
 import base64,colorsys,contextlib,math,subprocess,threading,time
-from .state import ROOT,STYLES,STYLE_NAMES
+from .state import ROOT,STYLES,STYLE_NAMES,LED_SCOPES,LED_SCOPE_NAMES
 from .ssh import Station
 from . import ui,runtime
 
 def label(style):
     return 'Пульсация: '+STYLE_NAMES[style[6:]].lower() if style.startswith('pulse-') else STYLE_NAMES[style]
+
+def choose_scope(config):
+    return ui.select('Когда показывать выбранную подсветку?',
+        [(LED_SCOPE_NAMES[scope]+(' (по умолчанию)' if scope=='speaking' else ''),scope) for scope in LED_SCOPES],
+        default=config.get('led_scope','speaking'))
 
 def frame(style,seconds):
     if style=='rainbow':
@@ -52,7 +57,7 @@ trap 'exit 0' TERM INT HUP
 IFS= read -r task_led_demo_source
 printf '%s' "$task_led_demo_source" | base64 -d > "$task_led_demo"
 unset task_led_demo_source
-ALISA_LED_PREVIEW=1 ALISA_LISTEN_LED=0 ALISA_LISTEN_LED_FILE= sh "$task_led_demo"
+ALISA_LED_PREVIEW=1 ALISA_LISTEN_LED=0 ALISA_LISTEN_LED_FILE= ALISA_LED_SCOPE_FILE= sh "$task_led_demo"
 '''
                         self.process=station.open_input(bootstrap)
                         self.process.stdin.write(base64.b64encode(script)+b'\n');self.process.stdin.flush()

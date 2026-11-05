@@ -91,7 +91,7 @@ class NativeRing(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == 'linux', 'shell and file-backed LED fixture')
 class Mini2Ring(unittest.TestCase):
-    def fixture(self, root, listen='0', style='off'):
+    def fixture(self, root, listen='0', style='off', scope=None):
         prefix = root / 'mini2'
         paths = []
         for zone in range(1, 7):
@@ -107,8 +107,11 @@ class Mini2Ring(unittest.TestCase):
         (clock / 'trigger').write_text('[none] quasar\n')
         gpio = root / 'gpio'
         gpio.write_text(' gpio-414 (GPIOZ_3 | ) in hi\n')
+        scope_file = root / 'led-scope'
+        if scope is not None:scope_file.write_text(scope+'\n')
         env = {**os.environ, 'ALICE_LED_ROOT': str(prefix), 'ALICE_MUTE_GPIO_STATUS': str(gpio),
-               'ALISA_LED_STYLE': style, 'ALISA_LISTEN_LED': listen, 'ALISA_LISTEN_LED_FILE': ''}
+               'ALISA_LED_STYLE': style, 'ALISA_LISTEN_LED': listen, 'ALISA_LISTEN_LED_FILE': '',
+               'ALISA_LED_SCOPE_FILE': str(scope_file)}
         process = subprocess.Popen(['bash', str(ROOT / 'assets/native/indicator.sh')],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, env=env)
@@ -159,18 +162,74 @@ class Mini2Ring(unittest.TestCase):
             finally:
                 self.finish(process)
 
+    def test_selected_effects_animate_in_pauses_and_keep_paired_zones(self):
+        from alisa_cli import lighting
+        from alisa_cli.state import STYLES
+        for style in STYLES:
+            with self.subTest(style=style),tempfile.TemporaryDirectory() as folder:
+                process,paths,clock=self.fixture(Path(folder),listen='1',scope='active '+style)
+                try:
+                    frames=[]
+                    for _ in range(17):
+                        self.send(process,'F 0 0 0 0 0 0 0 0 0');frames.append(self.frame(paths))
+                    for frame in frames:
+                        self.assertTrue(all(0<=v<=160 for v in frame))
+                        for pair in range(3):self.assertEqual(frame[pair*6:pair*6+3],frame[pair*6+3:pair*6+6])
+                    if style=='off':self.assertEqual(frames,[ [0]*18 ]*17)
+                    else:self.assertTrue(all(sum(frame)>0 for frame in frames))
+                    if style!='rainbow' and not style.startswith('pulse-'):
+                        rgb=list(map(int,lighting.frame(style,0).decode().split()[1:4]))
+                        self.assertEqual(frames[0],rgb*6)
+                    self.assertEqual(len({tuple(frame) for frame in frames})>1,style=='rainbow' or style.startswith('pulse-'))
+                    speaking='10 20 30 40 50 60 70 80 90'
+                    self.send(process,'F '+speaking)
+                    self.assertEqual(self.frame(paths)[:6],[10,20,30]*2)
+                    self.send(process,'0','STOCK');self.assertEqual(self.frame(paths),[0]*18)
+                finally:self.finish(process)
+                self.assertEqual((clock/'brightness').read_text(),'7\n')
+
+    def test_scope_and_color_reload_in_place_with_legacy_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);process,paths,clock=self.fixture(root,listen='1',style='rainbow')
+            def dark():
+                self.send(process,'F 0 0 0 0 0 0 0 0 0');return self.frame(paths)
+            try:
+                legacy=dark();self.assertGreater(sum(legacy),0);self.assertEqual(legacy[::3],[0]*6)
+                scope=root/'led-scope';scope.write_text('active red\n');self.assertEqual(dark(),[160,0,0]*6)
+                scope.write_text('active blue\n');self.assertEqual(dark(),[0,0,160]*6)
+                for invalid in ('active off','active unknown','unknown red','active red extra',''):
+                    scope.write_text(invalid+'\n');self.assertEqual(dark(),[0]*18)
+                scope.write_text('speaking rainbow\n');self.assertGreater(sum(dark()),0)
+                scope.unlink();self.assertGreater(sum(dark()),0)
+                self.assertIsNone(process.poll())
+            finally:self.finish(process)
+
+    def test_active_effect_releases_triggers_without_brightness_write_when_muted_or_unknown(self):
+        for state in ('lo','unknown'):
+            with self.subTest(state=state),tempfile.TemporaryDirectory() as folder:
+                root=Path(folder);process,paths,clock=self.fixture(root,scope='active rainbow')
+                try:
+                    self.send(process,'F 0 0 0 0 0 0 0 0 0');ours=self.frame(paths)
+                    (root/'gpio').write_text(' gpio-414 (GPIOZ_3 | ) in '+state+'\n')
+                    self.send(process,'F 0 0 0 0 0 0 0 0 0','STOCK')
+                    self.assertEqual(self.frame(paths),ours)
+                    self.assertTrue(all((path/'trigger').read_text().strip()=='quasar' for path in paths))
+                finally:self.finish(process)
+
 
 @unittest.skipUnless(sys.platform == 'linux', 'shell and framebuffer fixture')
 class Station2Panel(unittest.TestCase):
     @contextlib.contextmanager
     def panel(self, gpio_line=' gpio-421 ( |MUTE_SWITCH ) in lo\n gpio-464 ( |MUTE_STATE ) in lo\n',
-              listen='0', preview=False, initial=None):
+              listen='0', preview=False, initial=None, scope=None):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);fb=root/'fb0';gpio=root/'gpio';flag=root/'listen-led'
             fb.write_bytes(bytes(356) if initial is None else initial);gpio.write_text(gpio_line)
+            scope_file=root/'led-scope'
+            if scope is not None:scope_file.write_text(scope+'\n')
             env={**os.environ,'ALICE_PANEL_FB':str(fb),'ALICE_MUTE_GPIO_STATUS':str(gpio),
                  'ALISA_LED_STYLE':'red','ALISA_LISTEN_LED':listen,'ALISA_LISTEN_LED_FILE':str(flag),
-                 'ALISA_LED_PREVIEW':str(int(preview))}
+                 'ALISA_LED_PREVIEW':str(int(preview)), 'ALISA_LED_SCOPE_FILE':str(scope_file)}
             env.pop('ALICE_LED_ROOT',None)
             process=subprocess.Popen(['bash',str(ROOT/'assets/native/indicator.sh')],stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,bufsize=0)
@@ -198,6 +257,14 @@ class Station2Panel(unittest.TestCase):
             self.assertEqual(pixels[84],bytes((160,0,0,0)))
             self.assertEqual(pixels[88],bytes(4));self.assertEqual(sum(bool(any(p)) for p in pixels),88)
             self.send(process,'0','STOCK');self.assertEqual(fb.read_bytes(),bytes(356))
+
+    def test_active_rainbow_animates_and_mute_preserves_our_last_panel_frame(self):
+        with self.panel(scope='active rainbow') as (process,fb,gpio,flag):
+            self.send(process,'F 0 0 0 0 0 0 0 0 0');first=fb.read_bytes()
+            self.assertTrue(any(first));self.assertEqual(first[-4:],bytes(4))
+            self.send(process,'F 0 0 0 0 0 0 0 0 0');ours=fb.read_bytes();self.assertNotEqual(ours,first)
+            gpio.write_text(' gpio-421 ( |MUTE_SWITCH ) in hi\n')
+            self.send(process,'F 0 0 0 0 0 0 0 0 0','STOCK');self.assertEqual(fb.read_bytes(),ours)
 
     def test_default_pauses_are_dark_and_live_listening_toggle_is_optional(self):
         with self.panel() as (process,fb,gpio,flag):

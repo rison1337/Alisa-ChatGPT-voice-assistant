@@ -1,5 +1,5 @@
 import argparse,copy,json,subprocess,sys,time
-from .state import ROOT,MODES,STYLES,STYLE_NAMES,VOICES,load,save,validate
+from .state import ROOT,MODES,STYLES,STYLE_NAMES,LED_SCOPES,VOICES,load,save,validate
 from . import doctor,network,runtime,autostart,accounts,vpn
 from . import ui,ssh_setup
 from . import __version__,updates
@@ -83,7 +83,8 @@ def settings(config,apply=True,fields=('phrases','led')):
     else:ui.note('Настройки выбраны.','green')
 
 def save_preferences(config,previous):
-    if all(config.get(key)==previous.get(key) for key in ('phrases','led','listen_led')):
+    fields={'phrases':None,'led':None,'listen_led':False,'led_scope':'speaking'}
+    if all(config.get(key,default)==previous.get(key,default) for key,default in fields.items()):
         ui.note('Настройки не изменились.');return
     runtime.update_preferences(config,previous)
     save(config);ui.note('Настройки сохранены.','green')
@@ -243,6 +244,7 @@ def main(argv=None):
     parser.add_argument('--host');parser.add_argument('--port',type=int);parser.add_argument('--user');parser.add_argument('--identity')
     parser.add_argument('--dry-run',action='store_true');parser.add_argument('--yes',action='store_true');parser.add_argument('--no-start',action='store_true')
     parser.add_argument('--led',choices=STYLES)
+    parser.add_argument('--led-scope',choices=LED_SCOPES)
     args=parser.parse_args(argv)
     try:
         interactive=not args.action
@@ -265,8 +267,8 @@ def main(argv=None):
                 def execute(action,operation=None):
                     forwarded=[mode,action]
                     if operation:forwarded.append(operation)
-                    for key in ['host','port','user','identity','led']:
-                        if getattr(args,key) is not None:forwarded+=['--'+key,str(getattr(args,key))]
+                    for key in ['host','port','user','identity','led','led_scope']:
+                        if getattr(args,key) is not None:forwarded+=['--'+key.replace('_','-'),str(getattr(args,key))]
                     return main(forwarded)
                 from . import menus
                 if menus.run(mode,execute)==130:return 130
@@ -307,6 +309,15 @@ def main(argv=None):
                 if yes('Удалить программу выбранного режима?',False):show(uninstall.remove(config,value))
                 else:ui.note('Удаление отменено.')
         elif action=='settings':
+            if args.operation=='led-scope' or args.led_scope:
+                if mode!='native':raise ValueError('Режим подсветки настраивается для нативного режима')
+                if not supports_lighting(config.get('model')):raise ValueError(LIGHTING_UNAVAILABLE)
+                from . import lighting
+                previous=copy.deepcopy(config)
+                config['led_scope']=args.led_scope or lighting.choose_scope(config)
+                if args.led:config['led']=args.led
+                save_preferences(config,previous)
+                return 0
             if not supports_lighting(config.get('model')) and (args.operation=='listen-on' or (args.led and args.led!='off')):
                 raise ValueError(LIGHTING_UNAVAILABLE)
             if args.operation in ('listen-on','listen-off'):

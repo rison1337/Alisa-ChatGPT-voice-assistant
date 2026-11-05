@@ -1,10 +1,10 @@
 """Compact management pages with immediate hints and cached device reads."""
 import time
-from .state import load,STYLE_NAMES
+from .state import load,STYLE_NAMES,LED_SCOPE_NAMES
 from . import ui
 from .firmware import supports_lighting,LIGHTING_UNAVAILABLE,MODEL_NAMES
 
-TITLES={'main':'Нативный режим','settings':'Настройки','account':'Аккаунт ChatGPT',
+TITLES={'main':'Нативный режим','settings':'Настройки','lighting':'Подсветка','account':'Аккаунт ChatGPT',
         'vpn':'VPN / VLESS','service':'Установка и обслуживание','checks':'Проверки','autostart':'Автозапуск','updates':'Обновления'}
 
 def auto_entries(mode,config):
@@ -22,11 +22,15 @@ def entries(mode,page,config=None):
         values.append(('Установка и обслуживание','@service'))
     elif page=='settings':
         values=[('Голосовые фразы',('settings','phrases'))]
-        if supports_lighting(config.get('model')):values.append(('Подсветка',('settings','led')))
+        if supports_lighting(config.get('model')):values.append(('Подсветка','@lighting' if mode=='native' else ('settings','led')))
         if mode=='native':
-            if supports_lighting(config.get('model')):values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
             values.append(('Голос GPT',('voice',None)))
         values+=auto_entries(mode,config)
+    elif page=='lighting':
+        values=[('Цвет и анимация',('settings','led')),
+                ('Когда включать: '+LED_SCOPE_NAMES[config.get('led_scope','speaking')].lower(),('settings','led-scope'))]
+        if config.get('led_scope','speaking')=='speaking':
+            values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
     elif page=='account':values=[('Войти',('login',None)),('Сменить аккаунт',('login','change')),('Выйти из аккаунта',('logout',None))]
     elif page=='vpn':values=[('Запустить VPN',('vpn','start')),('Остановить VPN',('vpn','stop')),
         ('Сервер / подписка',('vpn','configure')),
@@ -109,6 +113,7 @@ def run(mode,execute,start_page='main'):
             return ui.FocusContent(describe(waiting[request[0]],choice),True)
         if choice=='@settings':return ui.FocusContent(phrase_summary()+'\n\nПодсветка: '+led_name()+'\n\n'+auto_summary())
         if choice==('settings','phrases'):return ui.FocusContent(phrase_summary())
+        if choice=='@lighting' or choice==('settings','led-scope'):return ui.FocusContent('Подсветка: '+led_name()+'\n'+LED_SCOPE_NAMES[configuration.get('led_scope','speaking')]+'\n\nПо умолчанию выбранный эффект включён только во время ответа GPT. Можно также включить его во время прослушивания и ожидания ответа, пока чат открыт. При выключенном микрофоне приоритет остаётся у штатной индикации.')
         if choice==('settings','led'):return ui.FocusContent('Подсветка: '+led_name())
         if choice in (('settings','listen-on'),('settings','listen-off')):return ui.FocusContent('В паузах GPT: '+('включена' if configuration.get('listen_led',False) else 'выключена')+'\n\nГолубая волна, пока чат GPT открыт и ответ не звучит. По умолчанию выключена. Меняется без перезапуска разговора; анимация ответа сохраняется. При цвете «Выключена» вся подсветка GPT остаётся погашенной.')
         if isinstance(choice,tuple) and (choice[0]=='autostart' or (choice[0]=='vpn' and str(choice[1]).startswith('autostart-'))):return ui.FocusContent(auto_summary())

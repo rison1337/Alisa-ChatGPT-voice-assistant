@@ -186,7 +186,8 @@ try: menus.run('native',execute,start_page='settings')
 except KeyboardInterrupt: print('CALLS',calls)
 """
   def drive(c):
-   c.expect('Настройки');self.menu_item(c,'settings',('settings','listen-on'),enter=False)
+   c.expect('Настройки');self.menu_item(c,'settings','@lighting');c.expect_screen('Цвет и анимация')
+   self.menu_item(c,'lighting',('settings','listen-on'),enter=False)
    c.expect_screen('В паузах GPT: выключена')
    c.send(' ');time.sleep(.4);c.send(' ');time.sleep(.4)
    c.sendcontrol('c');c.expect('CALLS')

@@ -53,8 +53,8 @@ class Station2Integration(unittest.TestCase):
             self.assertEqual(value['model'],'yandexmidi');self.assertEqual(value['led'],style)
             self.assertFalse(value['listen_led']);self.assertEqual(value['phrases'],before['phrases'])
             entries=menus.entries('native','settings',value)
-            self.assertIn(('Подсветка',('settings','led')),entries)
-            self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),entries)
+            self.assertIn(('Подсветка','@lighting'),entries)
+            self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),menus.entries('native','lighting',value))
             self.assertIn(('ALISA_LED_STYLE='+style).encode(),runtime.native_environment(value))
             value['listen_led']=True
             self.assertEqual(runtime.listening_preference(value),b'0\n' if style=='off' else b'1\n')
