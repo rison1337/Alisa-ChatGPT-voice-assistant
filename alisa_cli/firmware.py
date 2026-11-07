@@ -8,7 +8,9 @@ import re
 MAIND='7d431541e2737a94f8499953204dbb1306877e0cf7d36170c4b1a9e19974ba14'
 VQE='fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f'
 BUILDS={
-    'lite2':(('station-lite2','yandex,station-lite2','plum','yandex,prune'),[(MAIND,VQE)]),
+    # Lite 2 ships both Plum and Prune boards. Their device trees use the
+    # vendor-qualified base marker alongside a board revision, not bare plum.
+    'lite2':(('station-lite2','yandex,station-lite2','plum','yandex,plum','yandex,prune'),[(MAIND,VQE)]),
     'lite1':(('yandex,station-micro',),[('2dad0ffc61ba73d15ea813b754d7a56866d0477c321dcad9138b8d06e14ddbf1',
                                        'df67c7ad9fb9f2f9c473ba2aaed7663a0e898a2c6622993e65d3b8834a0b3646')]),
     # Yandex Station Mini 2: same Amlogic AXG platform as Lite 1. The pinned

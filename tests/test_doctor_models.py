@@ -44,6 +44,32 @@ class Models(unittest.TestCase):
  def test_lite2_keeps_its_pinned_build(self):
   r=self.check('native',output('yandex,prune',doctor.MAIND,doctor.VQE))
   self.assertEqual(r['model'],'lite2');self.assertTrue(r['firmware_abi_supported'])
+ def test_lite2_plum_and_prune_board_revisions_on_linux_and_windows(self):
+  # Root compatible properties from the four Lite 2 DTBs. Every board has a
+  # stable vendor-qualified fallback; CPU/SoC and revision alone are not models.
+  for board,base in [('plum-evt1','plum'),('plum-evt2','plum'),
+                     ('plum-evt2-aw21036','plum'),('prune-evt2','prune')]:
+   for platform in ('linux','win32'):
+    with self.subTest(board=board,platform=platform),patch('alisa_cli.windows.missing',return_value=[]):
+     text=output('yandex,'+board+'\0yandex,'+base,'a'*64,'b'*64)
+     text+='ALISA_FIRMWARE_VERSION=0.373.1.16.4836123286.20261106.137\n'
+     r=self.check('native',text,platform=platform)
+     self.assertEqual(r['model'],'lite2');self.assertTrue(r['mode_supported'])
+     self.assertTrue(r['ok']);self.assertEqual(r['firmware_status'],'unverified')
+     self.assertEqual(r['firmware_version'],'0.373.1.16.4836123286.20261106.137')
+     doctor.require(state.defaults('native'),r,warn=False)
+ def test_lite2_plum_bridge_is_supported_with_socat(self):
+  r=self.check('bridge',output('yandex,plum-evt2\0yandex,plum',doctor.MAIND,doctor.VQE,
+                             tools=('aplay','base64','sha256sum','socat')))
+  self.assertEqual(r['model'],'lite2');self.assertTrue(r['ok'])
+ def test_unknown_board_is_not_reported_as_native_only(self):
+  for marker in ('fake-yandex,plum','yandex,plum-other','amlogic, axg'):
+   with self.subTest(marker=marker):
+    r=self.check('native',output(marker,doctor.MAIND,doctor.VQE))
+    self.assertIsNone(r['model']);self.assertFalse(r['ok'])
+    with self.assertRaisesRegex(RuntimeError,'устройство не распознано') as caught:
+     doctor.require(state.defaults('native'),r)
+    self.assertNotIn('только в нативном режиме',str(caught.exception))
  def test_unknown_model_is_rejected(self):
   r=self.check('native',output('yandex,station-max',*LITE1))
   self.assertIsNone(r['model']);self.assertFalse(r['firmware_abi_supported']);self.assertFalse(r['ok'])

@@ -50,7 +50,7 @@ def require(config,report=None,warn=True):
     reasons=[]
     if not report['root']:reasons.append('нужны права root по SSH')
     if not report['plum']:reasons.append('устройство не распознано как Станция Лайт 1, Лайт 2, Мини 2, Мини 3 или Станция 2')
-    if report.get('mode_supported') is False:reasons.append('эта модель пока поддерживается только в нативном режиме; мост доступен для Лайт 2 и Мини 2')
+    if report['plum'] and report.get('mode_supported') is False:reasons.append('эта модель пока поддерживается только в нативном режиме; мост доступен для Лайт 2 и Мини 2')
     if not report.get('firmware_files_present',report['firmware_abi_supported']):reasons.append('не удалось прочитать maind и библиотеку VQE')
     if report.get('architecture', 'aarch64') not in ARCHITECTURES:reasons.append('архитектура колонки не поддерживается')
     if report['free_data_kib'] is None or report['free_data_kib']<=12000:reasons.append('на колонке нужно больше 12 МиБ свободного места')
