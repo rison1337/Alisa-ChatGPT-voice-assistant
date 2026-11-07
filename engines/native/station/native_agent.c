@@ -38,6 +38,7 @@ extern int link(const char *, const char *);
 struct value { const unsigned char *data; size_t size; u64 number; int wire; };
 struct agent {
     int fd, chat, recognizing, output_active, native_state, pause_pending;
+    int wire_fields;
     char listening[37], current_request[37], seen[64][37];
     unsigned int seen_count, commands, recognition_starts, speech_stops, native_speech_events, wake_blocks;
     unsigned int queue_clear_requests, music_pause_requests;
@@ -156,9 +157,13 @@ static int rpc(struct agent *a, const char *capability, unsigned int branch,
     unsigned char remote[512], envelope[560], packet[564];
     size_t n = put_bytes(remote, 7, capability, strlen(capability));
     n += put_bytes(remote + n, branch, method, size);
-    size_t length = put_bytes(envelope, 252, remote, n);
-    length += put_number(envelope + length, 253 * 8);
-    length += put_number(envelope + length, 210);
+    size_t length;
+    if (a->wire_fields) length = put_bytes(envelope, 210, remote, n);
+    else {
+        length = put_bytes(envelope, 252, remote, n);
+        length += put_number(envelope + length, 253 * 8);
+        length += put_number(envelope + length, 210);
+    }
     packet[0] = length; packet[1] = length >> 8;
     packet[2] = length >> 16; packet[3] = length >> 24;
     memcpy(packet + 4, envelope, length);
@@ -256,12 +261,13 @@ static void status(struct agent *a, const char *event) {
         "\"queue_clear_requests\":%u,\"music_pause_requests\":%u,\"pause_pending\":%d,\"focus_enabled\":%d,\"focus_ready\":%d,"
         "\"focus_acquires\":%u,\"focus_releases\":%u,"
         "\"focus_guard_pid\":%d,\"focus_recovering\":%d,"
-        "\"focus_yields\":%u,\"focus_reacquires\":%u,\"tts_gate_enabled\":%d}\n", event, getpid(),
+        "\"focus_yields\":%u,\"focus_reacquires\":%u,\"tts_gate_enabled\":%d,\"wire_format\":\"%s\"}\n", event, getpid(),
         a->chat ? "chat" : "idle", a->recognition_starts, a->commands, a->speech_stops,
         a->recognizing, a->native_state, a->native_speech_events, a->output_active, a->wake_blocks,
         a->queue_clear_requests, a->music_pause_requests, a->pause_pending, a->focus_enabled, a->focus_ready,
         a->focus_acquires, a->focus_releases, a->focus_guard_pid,
-        a->focus_recovering, a->focus_yields, a->focus_reacquires, !!a->tts_gate_file);
+        a->focus_recovering, a->focus_yields, a->focus_reacquires, !!a->tts_gate_file,
+        a->wire_fields ? "fields" : "wrapped");
     if (n > 0 && (size_t)n < sizeof(text) && !output(1, text, (size_t)n)) stopping = 1;
 }
 
@@ -523,18 +529,32 @@ static int handle_state(struct agent *a, const unsigned char *data, size_t size)
 static int handle_frame(struct agent *a, const unsigned char *data, size_t size) {
     struct value state;
     if (!field(data, size, 0, &state)) return 1;
-    if (int_field(data, size, 253) == 210 && bytes_field(data, size, 252, &state)) {
+    unsigned int kind;
+    if (a->wire_fields) {
+        /* The legacy factory schema uses the message field itself as its
+         * discriminator. Never mix this with the retail wrapper: replies and
+         * the focus guardian must use the same explicitly selected format. */
+        struct value other;
+        if (field(data, size, 252, &other) || field(data, size, 253, &other)) return 1;
+        if (bytes_field(data, size, 210, &state)) {
+            if (field(data, size, 3, &other)) return 1;
+            kind = 210;
+        } else if (bytes_field(data, size, 3, &state)) kind = 3;
+        else return 1;
+    } else {
+        kind = (unsigned int)int_field(data, size, 253);
+        if ((kind != 3 && kind != 210) || !bytes_field(data, size, 252, &state)) return 1;
+    }
+    struct value ignored;
+    if (!field(state.data, state.size, 0, &ignored)) return 1;
+    if (kind == 210) {
         struct value object;
         const char name[] = "AudioFilePlayerCapability";
-        if (!field(state.data, state.size, 0, &object)) return 1;
         if (bytes_field(state.data, state.size, 7, &object) &&
             object.size == sizeof(name) - 1 && !memcmp(object.data, name, object.size))
             return handle_focus(a, state.data, state.size);
         return 1;
     }
-    if (int_field(data, size, 253) != 3 || !bytes_field(data, size, 252, &state)) return 1;
-    struct value ignored;
-    if (!field(state.data, state.size, 0, &ignored)) return 1;
     return handle_state(a, state.data, state.size);
 }
 
@@ -610,6 +630,11 @@ __attribute__((constructor)) static void run_agent(void) {
     struct local_address address =
         {2, (unsigned short)((port >> 8) | (port << 8)), {127,0,0,1}, {0}};
     struct agent a = {0}; a.fd = -1; a.native_state = -1;
+    /* Keep all validated retail installs on their existing wire protocol.
+     * Factory fields are opt-in until focus/commands are checked on hardware. */
+    const char *wire = getenv("ALICE_NATIVE_WIRE_FORMAT");
+    if (wire && !strcmp(wire, "fields")) a.wire_fields = 1;
+    else if (wire && strcmp(wire, "wrapped")) _exit(2);
     a.tts_gate_file = getenv("ALICE_TTS_GATE_FILE");
     a.focus_current = a.focus_pending = -1;
     a.focus_guard_fd = -1;

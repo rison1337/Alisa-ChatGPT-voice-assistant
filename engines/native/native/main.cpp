@@ -30,7 +30,7 @@ int main(int argc,char **argv){
                 curl_easy_setopt(handle,CURLOPT_URL,url);curl_easy_setopt(handle,CURLOPT_TIMEOUT,8L);
                 curl_easy_setopt(handle,CURLOPT_CONNECTTIMEOUT,5L);curl_easy_setopt(handle,CURLOPT_NOSIGNAL,1L);
                 curl_easy_setopt(handle,CURLOPT_USERAGENT,"Mozilla/5.0 AlisaVoiceNetworkCheck");
-                curl_easy_setopt(handle,CURLOPT_CAINFO,"/system/vendor/quasar/certs/ca-certificates.crt");
+                configure_ca(handle);
                 curl_easy_setopt(handle,CURLOPT_WRITEFUNCTION,http_body);curl_easy_setopt(handle,CURLOPT_WRITEDATA,&body);
                 if(const char *proxy=getenv("ALISA_PROXY_URL"))curl_easy_setopt(handle,CURLOPT_PROXY,proxy);
                 auto code=curl_easy_perform(handle);long status=0;curl_easy_getinfo(handle,CURLINFO_RESPONSE_CODE,&status);
