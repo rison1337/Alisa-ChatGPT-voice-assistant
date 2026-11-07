@@ -26,7 +26,7 @@ def files():
     selected+=[ROOT/'engines/bridge/station'/name for name in ['profile.sh','indicator.sh']]
     selected+=[p for p in (ROOT/'engines/bridge/build').glob('*.so') if '.host.' not in p.name]
     selected+=[ROOT/'engines/bridge/build/libopus.so.0',ROOT/'engines/bridge/build/opus-copyright']
-    selected+=[ROOT/'engines/native/tools'/name for name in ['deploy.py','import_web_session.py']]
+    selected+=[ROOT/'engines/native/tools'/name for name in ['deploy.py','import_web_session.py','probe-isolated.sh']]
     return sorted({p for p in selected if p.is_file() and not p.is_symlink() and '__pycache__' not in p.parts and 'windows-amd64' not in p.parts})
 
 def populate(destination):
