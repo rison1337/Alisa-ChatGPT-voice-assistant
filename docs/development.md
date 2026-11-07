@@ -63,6 +63,24 @@ python3 scripts/package.py
 
 `package.py` обновляет `assets/native/manifest.json`. Изменённые модули требуют проверки на совместимой колонке; успешная компиляция не подтверждает ABI другой прошивки. Точное побайтовое совпадение сборок в разных окружениях не заявляется.
 
+### Обработка завершения Voice
+
+После распаковки исходников зависимостей можно отдельно проверить разбор
+серверных событий обычным компилятором C++17 на компьютере:
+
+```bash
+mkdir -p build
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -Iengines/native/native \
+  -Iengines/native/research/upstream/libdatachannel/deps/json/single_include \
+  engines/native/tests/voice_state.cpp -o build/voice-state-test
+./build/voice-state-test
+```
+
+Тест проверяет завершение до готовности аудио, приоритет `cap_reached`,
+неверные типы полей и замену произвольного текста сервера на `unknown`.
+Он не требует аккаунта, сети или аудиоустройства.
+
 ## VPN
 
 Установщик использует неизменённые официальные бинарники. Повторная загрузка с проверкой SHA-256: `python3 scripts/fetch_vpn.py` и `python3 scripts/fetch_xray.py`. Исходники соответствующих версий и Go-зависимости находятся в `third_party/vpn/` после распаковки исходного архива. Параметры upstream-сборки сохранены в `.goreleaser.yaml` sing-box и `.github/workflows/release.yml` Xray.

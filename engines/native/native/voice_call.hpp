@@ -12,6 +12,7 @@
 #include "transport_audit.hpp"
 #endif
 #include "effects.hpp"
+#include "voice_state.hpp"
 #include <rtc/rtc.hpp>
 #include <opus.h>
 #include <algorithm>
@@ -55,7 +56,26 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
     std::atomic<bool> flush_output{false};
     std::map<std::string,unsigned int> event_types;
     std::string caption_role,probe_caption;
-    std::string server_error;
+    VoiceServerState server_state;
+    std::atomic<rtc::PeerConnection::State> peer_state{rtc::PeerConnection::State::New};
+    std::atomic<rtc::PeerConnection::IceState> ice_state{rtc::PeerConnection::IceState::New};
+    static const char *peer_name(rtc::PeerConnection::State state){
+        using State=rtc::PeerConnection::State;
+        switch(state){
+            case State::New:return "new";case State::Connecting:return "connecting";
+            case State::Connected:return "connected";case State::Disconnected:return "disconnected";
+            case State::Failed:return "failed";case State::Closed:return "closed";
+        }return "unknown";
+    }
+    static const char *ice_name(rtc::PeerConnection::IceState state){
+        using State=rtc::PeerConnection::IceState;
+        switch(state){
+            case State::New:return "new";case State::Checking:return "checking";
+            case State::Connected:return "connected";case State::Completed:return "completed";
+            case State::Failed:return "failed";case State::Disconnected:return "disconnected";
+            case State::Closed:return "closed";
+        }return "unknown";
+    }
 #ifdef ALISA_USE_NETEQ
     RtpPlayout playout{true}; // Bounded header/timing telemetry, no audio queue.
     std::unique_ptr<AlisaNetEq,decltype(&alisa_neteq_destroy)> neteq{nullptr,alisa_neteq_destroy};
@@ -112,10 +132,8 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 if(event_types.size()<64)++event_types[kind];
-                if(kind=="goodbye"){
-                    server_error=payload.value("reason",std::string())=="cap_reached"?
-                        "voice_daily_limit_reached":"voice_session_ended";
-                    failed=true;changed.notify_all();
+                if(server_state.receive(kind,payload)){
+                    failed=true;changed.notify_all();return;
                 }
                 if(options.probe){
                     std::function<void(const json &,const std::string &,int)> scan;
@@ -172,7 +190,6 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
                     probe_reply_match=probe_caption.find(options.expected_reply)!=std::string::npos;
                 }
                 if(kind.find("audio_transcript")!=std::string::npos)assistant_seen=true;
-                if(kind=="error"||kind=="session.error")failed=true;
             }
             if(!updates.empty())publish(updates);
         }catch(const std::exception &){/* Unknown forward-compatible event; never log contents. */}
@@ -224,7 +241,13 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
             if(auto self=weak.lock())if(state==rtc::PeerConnection::GatheringState::Complete){self->gathered=true;self->changed.notify_all();}
         });
         pc->onStateChange([weak](rtc::PeerConnection::State state){
-            if(auto self=weak.lock())if(state==rtc::PeerConnection::State::Failed||state==rtc::PeerConnection::State::Closed){self->failed=true;self->changed.notify_all();}
+            if(auto self=weak.lock()){
+                self->peer_state=state;
+                if(state==rtc::PeerConnection::State::Failed||state==rtc::PeerConnection::State::Closed){self->failed=true;self->changed.notify_all();}
+            }
+        });
+        pc->onIceStateChange([weak](rtc::PeerConnection::IceState state){
+            if(auto self=weak.lock())self->ice_state=state;
         });
         rtc::Description::Audio audio("0",rtc::Description::Direction::SendRecv);
         audio.addOpusCodec(111,"minptime=10;useinbandfec=1");audio.addAttribute("ptime:20");
@@ -286,6 +309,9 @@ public:
             {"loop_overruns",loop_overruns.load()},{"max_encode_us",max_encode_us.load()},{"max_write_us",max_write_us.load()},
             {"open_cue_played",open_cue_played.load()},
             {"identity_shapes",identity_shapes},{"rss_kib",rss_kib()}};
+        result["server_close"]=server_state.close;result["last_server_state"]=server_state.last_state;
+        result["connection"]={{"ice_state",ice_name(ice_state.load())},{"peer_state",peer_name(peer_state.load())},
+            {"gathered",gathered.load()},{"data_channel_open",channel_open.load()}};
         if(options.probe)result["rtp_timing"]=playout.timing();
 #ifdef ALISA_USE_NETEQ
         AlisaNetEqStats n{};alisa_neteq_stats(neteq.get(),&n);
@@ -318,7 +344,7 @@ public:
             if(!changed.wait_for(lock,std::chrono::seconds(12),[&]{return gathered||failed||stop_requested||stopping;}))throw std::runtime_error("ice_gather_timeout");
         }
         if(failed||stop_requested||stopping){std::lock_guard<std::mutex> lock(mutex);
-            throw std::runtime_error(server_error.empty()?"call_cancelled":server_error);}
+            throw std::runtime_error(server_state.error.empty()?"call_cancelled":server_state.error);}
         std::string sid=options.voice_session_id.empty()?random_id():options.voice_session_id;
         std::transform(sid.begin(),sid.end(),sid.begin(),[](unsigned char c){return std::toupper(c);});
         {std::lock_guard<std::mutex> lock(mutex);identity["voice_session_id"]=sid;}
@@ -338,7 +364,7 @@ public:
             if(!changed.wait_for(lock,std::chrono::seconds(20),[&]{return channel_open||failed||stop_requested||stopping;}))throw std::runtime_error("webrtc_connect_timeout");
         }
         if(failed||stop_requested||stopping){std::lock_guard<std::mutex> lock(mutex);
-            throw std::runtime_error(server_error.empty()?"call_cancelled":server_error);}
+            throw std::runtime_error(server_state.error.empty()?"call_cancelled":server_state.error);}
         int error=0;
         std::unique_ptr<OpusEncoder,decltype(&opus_encoder_destroy)> encoder(
             opus_encoder_create(16000,1,OPUS_APPLICATION_VOIP,&error),opus_encoder_destroy);
@@ -362,11 +388,18 @@ public:
         }
         PcmOutput output(options.device.c_str());
         if(!options.probe){
-            for(int block=0;block<10&&!stop_requested&&!stopping;++block){short samples[1920];mode_cue_block(true,block,samples);output.write(samples,960);}
-            open_cue_played=true;
+            int block=0;
+            for(;block<10&&!failed&&!stop_requested&&!stopping;++block){short samples[1920];mode_cue_block(true,block,samples);output.write(samples,960);}
+            open_cue_played=block==10;
         }
-        if(stop_requested||stopping)throw std::runtime_error("call_cancelled");
-        if(options.connected)options.connected();
+        {
+            // Serialize readiness with goodbye. A close received during the
+            // opening cue must not announce an active call or start the mic.
+            std::lock_guard<std::mutex> lock(mutex);
+            if(!server_state.can_start_audio(failed||stop_requested||stopping))
+                throw std::runtime_error(server_state.error.empty()?"call_cancelled":server_state.error);
+            if(options.connected)options.connected();
+        }
         auto start=Clock::now(),tick=start;
         bool asked=false;bool starving=false;
 #ifndef ALISA_USE_NETEQ
@@ -497,7 +530,7 @@ public:
         json result=stats();result["underruns"]=output.underruns;
         result["success"]=!failed&&audible_blocks>8&&assistant_seen;
         {std::lock_guard<std::mutex> lock(mutex);result["identity"]=identity;
-            if(!server_error.empty())result["error"]=server_error;
+            if(!server_state.error.empty())result["error"]=server_state.error;
             if(options.probe)result["synthetic_caption"]=probe_caption;}
         stop();pc->close();return result;
     }

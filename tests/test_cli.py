@@ -9,6 +9,13 @@ def configured(mode):
  value=state.defaults(mode);value['host']='192.0.2.20';return value
 
 class ConfigTests(unittest.TestCase):
+ def test_voice_server_error_is_distinguished_from_limit_and_transport_timeout(self):
+  from alisa_cli import cli
+  message=cli.friendly('voice_server_internal_error')
+  self.assertIn('internal_error',message);self.assertIn('Возвращена Алиса',message)
+  self.assertNotIn('лимит',message.lower());self.assertNotIn('войти',message.lower())
+  self.assertIn('управляющий канал',cli.friendly('webrtc_connect_timeout'))
+  self.assertIn('сетевые адреса',cli.friendly('ice_gather_timeout'))
  def test_toggle_checks_current_runtime_before_stopping_or_starting(self):
   from alisa_cli import cli
   for mode,current,running in [('native',{'agent_connected':True,'phase':'idle'},True),('native',{'phase':'stopped'},False),('bridge',{'phase':'running'},True)]:

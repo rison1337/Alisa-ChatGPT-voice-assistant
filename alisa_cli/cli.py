@@ -194,7 +194,12 @@ def stun_settings(config,operation=None):
 def friendly(error):
     return {'voice_daily_limit_reached':'Дневной лимит голосового ChatGPT исчерпан. Возвращена Алиса; повторите после сброса лимита.',
        'browser_verification_required':'Нужна проверка браузера: выполните bridge login. Алиса восстановлена.',
-       'login_required':'Нужно снова войти: login','voice_session_ended':'ChatGPT завершил сеанс; возвращена Алиса.'}.get(error,error)
+       'login_required':'Нужно снова войти: login','voice_session_ended':'ChatGPT завершил сеанс; возвращена Алиса.',
+       'voice_server_internal_error':'ChatGPT завершил голосовой сеанс с internal_error. Возвращена Алиса. Точная причина отказа сервера не определена.',
+       'voice_server_upstream_error':'ChatGPT завершил голосовой сеанс с upstream_error. Возвращена Алиса.',
+       'voice_server_error':'ChatGPT завершил голосовой сеанс с server_error. Возвращена Алиса.',
+       'webrtc_connect_timeout':'Не открылся управляющий канал Voice. Проверьте сеть/VPN; этап соединения сохранён в диагностике.',
+       'ice_gather_timeout':'Не удалось собрать сетевые адреса Voice вовремя. Проверьте сеть/VPN и настройку STUN.'}.get(error,error)
 
 def installation_options(config,network_result):
     """Offer every setting directly; no checklist gates hide configuration."""
