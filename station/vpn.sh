@@ -20,10 +20,21 @@ tunnel_up() {
     # TUN appears before its creator sets IFF_UP; operstate may remain UNKNOWN.
     ip link show alisa-gpt 2>/dev/null | grep -q '[<,]UP[,>]'
 }
+table_routes() {
+    task_routes=$(ip "$1" route show table "$TABLE") || return 1
+    if [ -n "$task_routes" ] || [ "$1" != -6 ]; then
+        printf '%s\n' "$task_routes"
+        return 0
+    fi
+    # BusyBox 1.31 can hide IPv6 RTA_TABLE routes in a filtered dump.
+    # The full dump includes their table attribute; accept only our table.
+    ip -6 route show table all | awk -v wanted="$TABLE" '
+        {for (i=1; i<NF; i++) if ($i=="table" && $(i+1)==wanted) {print; break}}'
+}
 ready() {
     owned && tunnel_up || return 1
     for task_family in -4 -6; do
-        ip "$task_family" route show table "$TABLE" | grep -Eq '^default dev alisa-gpt( |$)' || return 1
+        table_routes "$task_family" | grep -Eq '^default dev alisa-gpt( |$)' || return 1
     done
 }
 rules() {
@@ -31,7 +42,7 @@ rules() {
     for task_family in -4 -6; do
         task_conflict=$(ip "$task_family" rule show | awk '$1 ~ /^151(0[0-4]|50):$/ && $0 !~ /fwmark 0xa150 / {print}')
         [ -z "$task_conflict" ] || { echo 'Reserved VPN rule priority is already used' >&2; return 1; }
-        task_conflict=$(ip "$task_family" route show table "$TABLE" | awk '!/unreachable default/ && !/default dev alisa-gpt/ {print}')
+        task_conflict=$(table_routes "$task_family" | awk '!/unreachable default/ && !/default dev alisa-gpt/ {print}')
         [ -z "$task_conflict" ] || { echo 'Reserved VPN route table is already used' >&2; return 1; }
     done
     # The unreachable default persists after the tunnel disappears: no fallback.

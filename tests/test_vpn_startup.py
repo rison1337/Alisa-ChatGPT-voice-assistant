@@ -49,7 +49,12 @@ if a[:2]==['link','show']:
  s['reads']+=1;s['up']=s['reads']>=s['up_after']
  out='9: alisa-gpt: <POINTOPOINT,NOARP'+(',UP' if s['up'] else '')+'> mtu 1500 state UNKNOWN'
 elif a[:2]==['route','show']:
- out='\\n'.join(s['routes'].get(family,[]))
+ rows=s['routes'].get(family,[])
+ if family=='6' and a[-1]=='all':
+  out='\\n'.join(row.replace(' metric',' table 150 metric',1) for row in rows)
+  out+='\\ndefault dev alisa-gpt table 151 metric 10'
+ elif family=='6' and s.get('ipv6_filter_bug'):out=''
+ else:out='\\n'.join(rows)
 elif a[:3]==['route','replace','unreachable']:
  rows=s['routes'].setdefault(family,[])
  if 'unreachable default metric 42760' not in rows:rows.append('unreachable default metric 42760')
@@ -134,6 +139,24 @@ p.write_text(json.dumps(s));print(out);raise SystemExit(code)
         self.existing_core();self.network(up_after=1)
         self.assertEqual(self.run_script('status').returncode,0)
         self.assertNotEqual(self.run_script('ready').returncode,0)
+
+    def test_busybox_ipv6_table_filter_uses_the_full_dump(self):
+        self.network(up_after=1,ipv6_filter_bug=True)
+        self.assertEqual(self.run_script().returncode,0)
+        self.assert_ready()
+
+    def test_full_ipv6_dump_does_not_accept_a_route_from_another_table(self):
+        self.existing_core()
+        self.network(up_after=1,ipv6_filter_bug=True,routes={
+            '4':['default dev alisa-gpt metric 10'],
+            '6':['unreachable default metric 42760']})
+        self.assertNotEqual(self.run_script('ready').returncode,0)
+
+    def test_busybox_full_dump_rejects_another_tools_ipv6_route_in_our_table(self):
+        self.network(ipv6_filter_bug=True,routes={'6':['2001:db8::/64 dev other0 metric 5']})
+        self.assertNotEqual(self.run_script().returncode,0)
+        self.assertEqual(self.network()['routes'],{'6':['2001:db8::/64 dev other0 metric 5']})
+        self.assertFalse((self.root/'core-starts').exists())
 
     def test_ipv6_route_failure_is_not_reported_as_ready_with_only_ipv4(self):
         self.network(up_after=1,route_failures=100,fail_family='6')
