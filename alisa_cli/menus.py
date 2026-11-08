@@ -18,7 +18,10 @@ def entries(mode,page,config=None):
     config=config or {}
     if page=='main':
         values=[('GPT — запустить / остановить',('toggle',None)),('Настройки','@settings'),('Аккаунт ChatGPT','@account')]
-        if mode=='native':values.append(('VPN / VLESS','@vpn'))
+        if mode=='native':
+            from . import devices
+            values.append(('Колонка: '+devices.current_name(),('devices',None)))
+            values.append(('VPN / VLESS','@vpn'))
         values.append(('Установка и обслуживание','@service'))
     elif page=='settings':
         values=[('Голосовые фразы',('settings','phrases'))]
@@ -48,6 +51,8 @@ def entries(mode,page,config=None):
     elif page=='checks':values=[('Колонка и компоненты',('doctor',None)),('Сеть ChatGPT',('network',None)),('Голосовой ответ',('verify',None))]
     elif page=='autostart':values=auto_entries(mode,config)
     else:raise ValueError('Неизвестная страница')
+    if mode=='native' and page=='service' and config.get('installed'):
+        values.insert(1,('Обновить компоненты колонки',('install','components')))
     return values+[('Другой режим' if page=='main' else 'Назад','back')]
 
 def run(mode,execute,start_page='main'):
@@ -64,6 +69,10 @@ def run(mode,execute,start_page='main'):
         endpoint=(configuration.get('host') or 'IP ещё не указан')+':'+str(configuration.get('port') or 2222)
         subtitle=endpoint+'  ·  '+('Установлен' if configuration.get('installed') else 'Требуется установка')
         if configuration.get('model') in MODEL_NAMES:subtitle+='  ·  '+MODEL_NAMES[configuration['model']]
+        if mode=='native':
+            from . import devices
+            note=devices.component_note(configuration)
+            if note:subtitle+='  ·  '+note
         return dict(title=titles[page],items=values,default=previous.get(page),details=results.get(page,''),subtitle=subtitle)
     def inline(choice):
         if isinstance(choice,str):return True
@@ -87,6 +96,8 @@ def run(mode,execute,start_page='main'):
         if mode=='native' and configuration['vpn'].get('enabled'):text+='\nАвтозапуск VLESS: '+('включён' if configuration['vpn'].get('autostart') else 'выключен')
         return text
     def hint(choice):
+        if choice==('devices',None):return 'Выбрать колонку для управления или добавить новую. Настройки и вход хранятся отдельно. Работающие разговоры не останавливаются.'
+        if choice==('install','components'):return 'Обновить компоненты только выбранной колонки из установленного пакета. Вход, чаты и настройки сохраняются. Программа на ПК и другие колонки не изменяются.'
         if choice=='@updates' or (isinstance(choice,tuple) and choice[0]=='update'):
             from . import __version__
             from .updates import preferences
@@ -148,7 +159,8 @@ def run(mode,execute,start_page='main'):
         if choice[0] in ('help','doctor','network','storage','status'):cache[choice]=(time.monotonic(),results[page])
         if choice[0]=='toggle':cache[('status',None)]=(time.monotonic(),results[page])
         if choice[0]=='vpn' and choice[1] in ('start','stop'):cache[('vpn','status')]=(time.monotonic(),results[page])
-        if code==130:return code
+        from .devices import SWITCHED
+        if code in (130,SWITCHED):return code
         return view()
     if ui.interactive():return ui.dashboard(**view(),on_select=choose,inline=inline,on_focus=preview,on_focus_hint=focus)
     while True:

@@ -18,10 +18,15 @@ def python_for(root, target):
     return str(Path(root) / 'windows/runtime/python.exe') if target == 'windows-amd64' else sys.executable
 
 
-def execute(root, target, arguments, phase, timeout=300):
+def execute(root, target, arguments, phase, timeout=300, state_directory=None):
     argv = [python_for(root, target), '-B', '-X', 'utf8', str(Path(root) / 'alisa.py'), *arguments]
+    environment={**os.environ,'ALISA_UPDATE_WORKER':'1'}
+    if state_directory is not None:
+        # The Windows supervisor has its original environment. Pin every child
+        # (including rollback) to the job's state, not the last menu selection.
+        environment.update(ALISA_HOME=str(state_directory),ALISA_NATIVE_DEVICE='default')
     result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout,
-                            env={**os.environ, 'ALISA_UPDATE_WORKER':'1'})
+                            env=environment)
     if result.returncode:
         # Recognise only fixed public error codes, never arbitrary child output.
         try:detail = MESSAGES.get(json.loads(result.stdout).get('update_error'))
@@ -58,7 +63,7 @@ def install_application(payload, target, record):
     return json.loads(record.read_text(encoding='utf-8'))
 
 
-def apply(job_path):
+def _apply(job_path):
     job_path = Path(job_path).resolve()
     job = json.loads(job_path.read_text(encoding='utf-8'))
     root, payload = Path(job['current_root']), Path(job['payload'])
@@ -74,6 +79,8 @@ def apply(job_path):
     result = {'phase': 'starting', 'version': version, 'job': str(job_path.parent), 'modes': modes}
     record = None
     stopped, attempted, started = [], [], []
+    def selected(root,target,arguments,phase,timeout=300):
+        return execute(root,target,arguments,phase,timeout=timeout,state_directory=job['state_directory'])
     def check_modes():
         for item in modes:
             mode = item['mode']
@@ -81,7 +88,7 @@ def apply(job_path):
                 raise RuntimeError('Неизвестный режим обновления.')
             # Use the verified candidate's diagnostics even when the installed
             # version used to mistake an SSH failure for a stopped controller.
-            state = json.loads(execute(payload, target, [mode, 'status'], 'проверка состояния ' + mode))
+            state = json.loads(selected(payload, target, [mode, 'status'], 'проверка состояния ' + mode))
             if state.get('voice_active') or state.get('phase') in ('active', 'connecting', 'opening', 'starting', 'stopping'):
                 raise RuntimeError('Сначала закройте голосовой чат. Программа не заменена.')
             # Recheck readiness immediately before mutation; the download may
@@ -90,30 +97,30 @@ def apply(job_path):
     try:
         check_modes()
         for item in modes:
-            execute(payload, target, [item['mode'], 'install', '--yes', '--no-start', '--dry-run'],
+            selected(payload, target, [item['mode'], 'install', '--yes', '--no-start', '--dry-run'],
                     'проверка компонентов ' + item['mode'], timeout=900)
         check_modes()  # Voice may have opened during the component preflight.
         for item in modes:
             if item['running']:
                 print('Останавливаю компоненты: ' + item['mode'], flush=True)
                 stopped.append(item)
-                execute(root, target, [item['mode'], 'stop'], 'остановка ' + item['mode'])
+                selected(root, target, [item['mode'], 'stop'], 'остановка ' + item['mode'])
         app_install.private_json(receipt, result)
         print('Устанавливаю новую версию программы…', flush=True)
         record = install_application(payload, target, job_path.parent / 'application-record.json')
         if Path(record['destination']).resolve() != root.resolve():
             raise RuntimeError('Установщик вернул другую папку программы.')
-        observed = execute(root, target, ['--version'], 'проверка новой программы').decode().strip()
+        observed = selected(root, target, ['--version'], 'проверка новой программы').decode().strip()
         if observed != version:
             raise RuntimeError('Установленная версия не прошла проверку.')
         for item in modes:
             attempted.append(item)
             print('Обновляю компоненты: ' + item['mode'], flush=True)
-            execute(root, target, [item['mode'], 'install', '--yes', '--no-start'], 'обновление ' + item['mode'], timeout=900)
+            selected(root, target, [item['mode'], 'install', '--yes', '--no-start'], 'обновление ' + item['mode'], timeout=900)
         for item in modes:
             if item['running']:
                 started.append(item)
-                execute(root, target, [item['mode'], 'start'], 'запуск ' + item['mode'])
+                selected(root, target, [item['mode'], 'start'], 'запуск ' + item['mode'])
         result.update(phase='complete', backup=record.get('backup'), message='Программа и установленные компоненты обновлены. Вход, чаты и настройки сохранены.')
         print(result['message'], flush=True)
     except BaseException as error:
@@ -126,7 +133,7 @@ def apply(job_path):
         failures = []
         for item in reversed(started):
             try:
-                execute(root, target, [item['mode'], 'stop'], 'остановка новой версии')
+                selected(root, target, [item['mode'], 'stop'], 'остановка новой версии')
             except Exception:
                 failures.append('остановка ' + item['mode'])
         if record is None:
@@ -142,12 +149,12 @@ def apply(job_path):
         if not failures:
             for item in reversed(attempted):
                 try:
-                    execute(root, target, [item['mode'], 'install', '--yes', '--no-start'], 'возврат компонентов', timeout=900)
+                    selected(root, target, [item['mode'], 'install', '--yes', '--no-start'], 'возврат компонентов', timeout=900)
                 except Exception:
                     failures.append('компоненты ' + item['mode'])
         for item in stopped:
             try:
-                execute(root, target, [item['mode'], 'start'], 'возврат режима')
+                selected(root, target, [item['mode'], 'start'], 'возврат режима')
             except Exception:
                 failures.append('запуск ' + item['mode'])
         result.update(phase='recovery_needed' if failures else 'rolled_back', message=message, rollback_failures=failures)
@@ -183,6 +190,14 @@ def apply(job_path):
             return (0 if result['phase'] == 'complete' else 1) or relaunched
         os.execv(executable, [executable, '-B', '-X', 'utf8', str(root / 'alisa.py')])
     return 0 if result['phase'] == 'complete' else 1
+
+
+def apply(job_path):
+    job=json.loads(Path(job_path).read_text(encoding='utf-8'))
+    root=Path(job['current_root'])
+    if not app_install.owned(root,job['platform']):raise RuntimeError('Установленная программа не распознана.')
+    with app_install.exclusive_lock(root.parent/'.alisa-update.lock','Обновление программы уже выполняется в другом окне.'):
+        return _apply(job_path)
 
 
 if __name__ == '__main__':
