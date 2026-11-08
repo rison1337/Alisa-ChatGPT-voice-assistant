@@ -503,7 +503,9 @@ static int handle_state(struct agent *a, const unsigned char *data, size_t size)
     if (!bytes_field(data, size, 15, &request) ||
         !field(request.data, request.size, 0, &text) ||
         int_field(request.data, request.size, 2) != 1 ||
-        int_field(request.data, request.size, 4) != 1 || !id[0]) return 1;
+        /* The factory fields schema does not carry the retail f4=1 flag.
+         * Final-result, BUSY, request-id and duplicate checks still apply. */
+        (!a->wire_fields && int_field(request.data, request.size, 4) != 1) || !id[0]) return 1;
     /* Wait for BUSY, as the stock request has then finished its voice input.
      * Cancelling an earlier LISTENING/final notification can strand the
      * spotter while the SDK is still completing that input. */

@@ -129,6 +129,30 @@ class NativeMusic(unittest.TestCase):
         self.assertEqual(self.rpc()[7],b'AliceCapability')
         self.assertEqual(self.control('PING')['commands'],1)
 
+    def test_factory_final_commands_do_not_require_retail_request_flag(self):
+        for index,flag in enumerate((None,0)):
+            request=field(1,'открой чат'.encode())+number(16)+number(1)
+            if flag is not None:request+=number(32)+number(flag)
+            identifier=('00000000-0000-4000-8000-%012d'%(index+42)).encode()
+            payload=number(8)+number(3)+field(7,identifier)+field(15,request)
+            envelope=self.envelope(3,payload)
+            self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+            if self.wire_format=='fields':
+                self.assertEqual(self.message(),{'event':'command','action':'open'})
+                self.assertEqual(self.rpc()[7],b'AliceCapability')
+            else:self.assertFalse(select.select([self.process.stdout],[],[],.05)[0])
+            self.assertEqual(self.control('PING')['commands'],index+1 if self.wire_format=='fields' else 0)
+
+    def test_unfinished_or_unidentified_factory_commands_remain_ignored(self):
+        identifier=b'00000000-0000-4000-8000-000000000042'
+        for native_state,final,request_id in ((1,1,identifier),(2,1,identifier),(3,0,identifier),(3,1,b'')):
+            request=field(1,'открой чат'.encode())+number(16)+number(final)
+            payload=number(8)+number(native_state)+field(7,request_id)+field(15,request)
+            envelope=self.envelope(3,payload)
+            self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+            self.assertFalse(select.select([self.process.stdout],[],[],.03)[0])
+            self.assertEqual(self.control('PING')['commands'],0)
+
     def test_guard_uses_the_selected_format_after_agent_is_killed(self):
         self.state(0);self.control('CHAT');self.assert_pause()
         path=fields(self.rpc()[12])[2]
