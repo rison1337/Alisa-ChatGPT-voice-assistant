@@ -5,6 +5,7 @@ from unittest.mock import patch
 import paramiko
 from alisa_cli import winssh
 from alisa_cli.ssh import Station
+from alisa_cli.errors import PublicError
 from alisa_cli.state import defaults
 from alisa_cli.win_browser import CDP,endpoint
 
@@ -146,6 +147,15 @@ class BrowserAndPackageTests(unittest.TestCase):
             self.assertTrue(calls[0]['identity'].endswith('existing-key'))
             self.assertNotEqual(calls[1]['identity'],calls[0]['identity']);self.assertTrue(Path(config['identity']).exists())
             self.assertNotIn('password',state.load('native'))
+    def test_remote_key_write_failure_keeps_a_separate_safe_diagnostic(self):
+        from alisa_cli import state
+        with tempfile.TemporaryDirectory() as temp,patch.object(state,'HOME',Path(temp)):
+            config=defaults('native');config['host']='192.0.2.1';before=dict(config)
+            result=subprocess.CompletedProcess([],1,b'',b'Read-only file system private-remote-detail')
+            with patch.object(winssh,'run',return_value=result):
+                with self.assertRaises(PublicError) as caught:winssh.install_key(config,'synthetic-only-password')
+            self.assertEqual(caught.exception.code,'ssh_key_install')
+            self.assertNotIn('private-remote-detail',str(caught.exception));self.assertEqual(config,before)
     def test_import_accepts_only_fresh_local_browser_endpoint(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'DevToolsActivePort';path.write_text('12345\n/devtools/browser/1234-test\n')

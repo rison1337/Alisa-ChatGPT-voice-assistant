@@ -2,7 +2,8 @@
 import contextlib,hashlib,ipaddress,os,shlex,socket,subprocess,sys,tempfile,threading
 from pathlib import Path
 from .state import HOME,save,write_private,validate
-from .ssh import Station
+from .ssh import Station,check_result
+from .errors import PublicError
 
 def missing_tools():
     if sys.platform=='win32':
@@ -118,10 +119,12 @@ def install_key(config,password=None):
         args=args[:-1]+['-o','PreferredAuthentications=password','-o','PubkeyAuthentication=no','-o','NumberOfPasswordPrompts=1',
                        '-o','ControlMaster=no','-o','ControlPath=none',args[-1]]
         with password_channel(password) as env:
-            result=subprocess.run(args+[command],env=env,capture_output=True,timeout=60)
-        if result.returncode==9:raise RuntimeError('SSH работает, но у пользователя нет прав root')
-        if result.returncode:raise RuntimeError('Вход по SSH не удался. Проверьте пароль; сервер должен разрешать вход по паролю.')
-    else:station.run(command)
+            try:result=subprocess.run(args+[command],env=env,capture_output=True,timeout=60)
+            except subprocess.TimeoutExpired:raise PublicError('ssh_timeout') from None
+    else:result=station.run(command,check=False)
+    if result.returncode==9:raise RuntimeError('SSH работает, но у пользователя нет прав root')
+    if result.returncode==255:check_result(result)
+    if result.returncode:raise PublicError('ssh_key_install')
     checked={**config,'identity':str(key)}
     if Station(checked).text('id -u').strip()!='0':raise RuntimeError('Вход новым SSH-ключом не подтверждён. Настройки не сохранены.')
     config.update(checked);save(config)

@@ -108,7 +108,7 @@ def install_key(config,password):
     authentication=config if password is not None or config.get('identity') else candidate
     result=run(authentication,command,password=password,check=False)
     if result.returncode==9:raise RuntimeError('SSH работает, но у пользователя нет прав root.')
-    if result.returncode:raise RuntimeError('Не удалось установить отдельный SSH-ключ.')
+    if result.returncode:raise PublicError('ssh_key_install')
     if run(candidate,'id -u').stdout.strip()!=b'0':raise RuntimeError('Вход отдельным ключом не подтверждён. Настройки не сохранены.')
     config.update(candidate);save(config);return {'ssh':True,'root':True,'key_saved':True}
 
