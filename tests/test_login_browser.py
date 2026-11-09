@@ -50,7 +50,7 @@ class OwnerBrowser(unittest.TestCase):
    argv=launch.call_args.args[0]
    self.assertFalse(any('remote-debugging' in argument or 'enable-automation' in argument or 'disable-web-security' in argument for argument in argv))
    self.assertIn('--proxy-server=socks5://127.0.0.1:32123',argv)
-   self.assertEqual(argv[-1],'https://chatgpt.com/')
+   self.assertEqual(argv[-1],'https://chatgpt.com/auth/login')
 
  def test_cancelled_login_never_starts_import_or_touches_existing_session(self):
   with tempfile.TemporaryDirectory() as folder:

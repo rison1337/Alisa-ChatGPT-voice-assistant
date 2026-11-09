@@ -18,6 +18,13 @@ def output(compatible,maind,vqe,tools=('aplay','base64','sha256sum')):
   *['/usr/bin/'+t for t in tools]])+'\n'
 
 class Models(unittest.TestCase):
+ def test_cucumber_native_is_experimental_and_bridge_is_rejected(self):
+  text=output('yandex,cucumber-dvt2\x00yandex,cucumber',*LITE1).replace('armv7l','aarch64')
+  native=self.check('native',text)
+  self.assertEqual(native['model'],'cucumber');self.assertTrue(native['ok'])
+  self.assertFalse(native['firmware_abi_supported']);self.assertTrue(native['warnings'])
+  bridge=self.check('bridge',text)
+  self.assertFalse(bridge['mode_supported']);self.assertFalse(bridge['ok'])
  def check(self,mode,text,platform='linux'):
   c=state.defaults(mode);c['host']='192.0.2.10'
   with patch.object(doctor.Station,'text',return_value=text),patch.object(doctor.shutil,'which',return_value='/usr/bin/x'),\

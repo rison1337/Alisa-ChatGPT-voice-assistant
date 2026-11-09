@@ -43,6 +43,7 @@ class WindowsLoginTests(unittest.TestCase):
             profile=Path(folder)/'profile';launch.return_value.poll.return_value=None
             win_browser.open_window(profile)
             visible=launch.call_args.args[0]
+            self.assertEqual(visible[-1],'https://chatgpt.com/auth/login')
             self.assertIn('--disable-extensions',visible);self.assertIn('--disable-sync',visible)
             self.assertFalse(any('remote-debugging' in item or 'enable-automation' in item for item in visible))
             win_browser._processes.clear();launch.return_value.poll.return_value=0

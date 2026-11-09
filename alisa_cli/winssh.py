@@ -43,7 +43,19 @@ def trust(config,confirm):
     config['known_hosts']=str(known)
 
 def connect(config,password=None):
-    p=library();client=p.SSHClient();known=config.get('known_hosts')
+    p=library()
+    class StationClient(p.SSHClient):
+        def _auth(self, username, *args, **kwargs):
+            # SSHClient verifies the pinned host key before calling _auth.
+            # OpenSSH also tries none first (root can have no password).
+            if config.get('_allow_none',True):
+                try:
+                    self.get_transport().auth_none(username)
+                    if self.get_transport().is_authenticated():return
+                except p.AuthenticationException:
+                    pass
+            return super()._auth(username, *args, **kwargs)
+    client=StationClient();known=config.get('known_hosts')
     if not known or not Path(known).is_file():raise RuntimeError('Сначала подтвердите SSH-ключ колонки через настройку подключения.')
     client.load_host_keys(str(known));client.set_missing_host_key_policy(p.RejectPolicy())
     try:
@@ -95,7 +107,10 @@ def install_key(config,password):
     path=HOME/'ssh'/('id_ed25519_'+suffix)
     existed=path.exists()
     if password is None and not config.get('identity') and not existed:
-        raise RuntimeError('Для первого входа введите пароль SSH или укажите существующий ключ через --identity.')
+        # Probe the pinned host before creating files: some rooted Dropbear
+        # installations accept SSH's none method, just as OpenSSH does.
+        if run(config,'id -u').stdout.strip()!=b'0':
+            raise RuntimeError('SSH работает, но у пользователя нет прав root.')
     if not path.exists():
         key=Ed25519PrivateKey.generate()
         write_private(path,key.private_bytes(s.Encoding.PEM,s.PrivateFormat.OpenSSH,s.NoEncryption()))
@@ -109,7 +124,7 @@ def install_key(config,password):
     result=run(authentication,command,password=password,check=False)
     if result.returncode==9:raise RuntimeError('SSH работает, но у пользователя нет прав root.')
     if result.returncode:raise PublicError('ssh_key_install')
-    if run(candidate,'id -u').stdout.strip()!=b'0':raise RuntimeError('Вход отдельным ключом не подтверждён. Настройки не сохранены.')
+    if run({**candidate,'_allow_none':False},'id -u').stdout.strip()!=b'0':raise RuntimeError('Вход отдельным ключом не подтверждён. Настройки не сохранены.')
     config.update(candidate);save(config);return {'ssh':True,'root':True,'key_saved':True}
 
 class Stream:

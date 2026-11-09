@@ -8,6 +8,8 @@ import re
 MAIND='7d431541e2737a94f8499953204dbb1306877e0cf7d36170c4b1a9e19974ba14'
 VQE='fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f'
 BUILDS={
+    # One owner-tested Midi; retain the experimental warning pending broader validation.
+    'cucumber':(('yandex,cucumber',),[]),
     # Lite 2 ships both Plum and Prune boards. Their device trees use the
     # vendor-qualified base marker alongside a board revision, not bare plum.
     'lite2':(('station-lite2','yandex,station-lite2','plum','yandex,plum','yandex,prune'),[(MAIND,VQE)]),
@@ -31,7 +33,7 @@ BUILDS={
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
 MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini2':'Станция Мини 2','yandexmidi':'Станция 2',
-             'bergamot':'Станция Мини 3'}
+             'bergamot':'Станция Мини 3','cucumber':'Станция Миди (экспериментально)'}
 LIGHTING_UNAVAILABLE='Подсветка GPT недоступна для этой модели.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
          'но работа микрофона, звука и голосовых команд не гарантируется.')
