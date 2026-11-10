@@ -42,6 +42,8 @@ for task_led_zone in $zones; do dark_frame="$dark_frame 0 0 0"; done
 # (/dev/fb0, 89x1 RGBW) instead of plum sysfs rings; render there instead.
 panel_mode=0
 mini3_mode=0
+midi_mode=0
+midi_anim_step=0
 if [ -z "${ALICE_LED_ROOT:-}" ]; then
     # Explicit fixture paths must take precedence over physical device detection.
     if [ -n "${ALICE_MINI3_FB:-}" ]; then
@@ -49,6 +51,14 @@ if [ -z "${ALICE_LED_ROOT:-}" ]; then
         panel_mode=1
     elif [ -n "${ALICE_PANEL_FB:-}" ]; then
         panel_mode=1
+    elif [ -n "${ALICE_MIDI_FB:-}" ]; then
+        mini3_mode=1; midi_mode=1; panel_mode=1
+    elif tr '\000' '\n' < /proc/device-tree/compatible 2>/dev/null | grep -qx 'yandex,cucumber'; then
+        [ -c /dev/fb0 ] &&
+        [ "$(cat /sys/class/graphics/fb0/name)" = ring ] &&
+        [ "$(cat /sys/class/graphics/fb0/virtual_size)" = 24,1 ] &&
+        [ "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 24 ] || exit 0
+        mini3_mode=1; midi_mode=1; panel_mode=1
     elif tr '\000' '\n' < /proc/device-tree/compatible 2>/dev/null | grep -Eq '^yandex,bergamot(-evt1)?$'; then
         # Mini 3 has six BGR pixels; it does not use Mini 2's sysfs LEDs.
         [ -c /dev/fb0 ] &&
@@ -205,6 +215,7 @@ PANEL_FB=${ALICE_PANEL_FB:-/dev/fb0}
 [ "$mini3_mode" = 0 ] || PANEL_FB=${ALICE_MINI3_FB:-/dev/fb0}
 panel_bytes=356
 [ "$mini3_mode" = 0 ] || panel_bytes=18
+if [ "$midi_mode" = 1 ]; then PANEL_FB=${ALICE_MIDI_FB:-/dev/fb0}; panel_bytes=72; fi
 # led x y zone: zone 1..3 by distance from the center (ring1 = inner),
 # map transcribed from the experimental index map for the Station 2 panel.
 panel_map='0 1 0 3
@@ -312,6 +323,31 @@ panel_read() {
     task_panel_current=${task_panel_snapshot#* }
 }
 panel_encode() {
+    if [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] &&
+       [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] && [ "$1" != ' 0 0 0 0 0 0 0 0 0' ]; then
+        # Continuous red/amber lobes: no integer phase steps or hard tail edges.
+        task_panel_encoded=$(awk -v t="$midi_anim_step" 'BEGIN {
+            phase=t*24/60;
+            for(p=0;p<24;p++) {
+                a=phase-p; while(a<0)a+=24; while(a>=24)a-=24;
+                if(a>12)a=24-a; b=12-a;
+                q=1-a*a/144; u=q*q*q; u=u*u; u=u*u;
+                q=1-b*b/144; v=q*q*q; v=v*v; v=v*v;
+                r=3+250*u+225*v; g=1+115*u+9*v; blue=0;
+                if(r>253)r=253;
+                printf "\\0%03o\\0%03o\\0%03o",blue,g,r;
+            }
+        }')
+        return
+    fi
+    if [ "$midi_mode" = 1 ]; then
+        # Interpolate the three logical RGB colors around the 24-pixel BGR ring.
+        task_panel_encoded=$(awk -v v="$1" 'BEGIN {
+            split(v,a," "); for(z=0;z<3;z++) for(p=0;p<8;p++)
+                for(c=3;c>=1;c--) printf "\\0%03o",int((a[z*3+c]*(8-p)+a[((z+1)%3)*3+c]*p)/8)
+        }')
+        return
+    fi
     if [ "$mini3_mode" = 1 ]; then
         # Match Mini 2's pairs: logical zones 1/2/3 -> pixels 0-1/2-3/4-5.
         task_panel_encoded=$(awk -v v="$1" 'BEGIN {
@@ -380,7 +416,52 @@ mini3_ring_ready() {
         ring_waiting=0
     fi
 }
+
+logo_owned=0; logo_blocked=0; logo_saved=''; logo_painted=''
+logo_read() {
+    logo_current=$(od -An -v -tu1 -N18 "${ALISA_MIDI_LOGO_FB:-/dev/fb1}" | awk '{for(i=1;i<=NF;i++){n++;printf "\\0%03o",$i}} END {if(n!=18)exit 1}')
+}
+logo_release() {
+    if [ "$logo_owned" = 1 ]; then
+        if panel_unmuted && logo_read && [ "$logo_current" = "$logo_painted" ]; then
+            printf '%b' "$logo_saved" > "${ALISA_MIDI_LOGO_FB:-/dev/fb1}"
+        fi
+        logo_owned=0
+    fi
+}
+logo_paint() {
+    [ "$midi_mode" = 1 ] && [ "$logo_blocked" = 0 ] || return 0
+    # Geometry and device name are checked before ever touching the logo.
+    if [ -z "${ALISA_MIDI_LOGO_FB:-}" ]; then
+        IFS= read -r logo_name < /sys/class/graphics/fb1/name &&
+        IFS= read -r logo_size < /sys/class/graphics/fb1/virtual_size &&
+        IFS= read -r logo_bpp < /sys/class/graphics/fb1/bits_per_pixel &&
+        [ "$logo_name:$logo_size:$logo_bpp" = logo:6,1:24 ] || return 0
+    fi
+    panel_unmuted && logo_read || return 0
+    if [ "$logo_owned" = 1 ] && [ "$logo_current" != "$logo_painted" ]; then
+        logo_owned=0;logo_blocked=1;return 0
+    fi
+    if [ "$logo_owned" = 0 ]; then logo_saved=$logo_current;logo_owned=1;fi
+    if [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] &&
+       [ "$task_led_requested" != ' 0 0 0 0 0 0 0 0 0' ]; then
+        logo_painted=$(awk -v t="$midi_anim_step" 'BEGIN {
+            for(p=0;p<6;p++) {
+                x=t/60+p/6; x=x-int(x); if(x>0.5)x=1-x; x=x*2;
+                pulse=x*x*(3-2*x);
+                r=12+230*pulse;g=1+45*pulse;b=0;
+                printf "\\0%03o\\0%03o\\0%03o",b,g,r;
+            }
+        }')
+    else
+        # Static colors and previews sample the ring; animation computes directly.
+        logo_painted=$(od -An -v -tu1 -N72 "$PANEL_FB" | awk '{for(i=1;i<=NF;i++){if(n%12<3)printf "\\0%03o",$i;n++}} END {if(n!=72)exit 1}') || return 0
+    fi
+    printf '%b' "$logo_painted" > "${ALISA_MIDI_LOGO_FB:-/dev/fb1}"
+}
+
 panel_release() {
+    logo_release
     if [ "$panel_owned" = 1 ]; then
         # Firmware may already own a new warning/animation. Never clear it;
         # mute or an unknown GPIO state also forbids the final write.
@@ -423,7 +504,7 @@ if [ "$panel_mode" = 1 ]; then
     if [ -e "$clock_mode_file" ]; then
         clock_mode=$(cat "$clock_mode_file" 2>/dev/null) || clock_mode=clock
     fi
-    if [ "$mini3_mode" = 1 ] && [ "${ALISA_MINI3_CLOCK_EYES:-0}" = 1 ] &&
+    if [ "$mini3_mode" = 1 ] && [ "$midi_mode" = 0 ] && [ "${ALISA_MINI3_CLOCK_EYES:-0}" = 1 ] &&
        [ "$clock_mode" = eyes ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ]; then
         clock_dir=$(mktemp -d /tmp/alisa-ring-clock-XXXXXX)
         mkfifo "$clock_dir/input"
@@ -434,12 +515,52 @@ if [ "$panel_mode" = 1 ]; then
         exec 4<&-
         trap '' PIPE
     fi
+    midi_clock_enabled=0; midi_clock_attempts=0; midi_clock_retry_at=0
+    midi_clock_start() {
+        midi_clock_attempts=$((midi_clock_attempts+1))
+        clock_dir=$(mktemp -d /tmp/alisa-ring-clock-XXXXXX)
+        mkfifo "$clock_dir/input"
+        exec 3<>"$clock_dir/input"
+        exec 4<"$clock_dir/input"
+        sh "$(dirname -- "$0")/midi-clock.sh" <&4 3>&- 4>&- > /dev/null &
+        clock_pid=$!
+        exec 4<&-
+        trap '' PIPE
+    }
+    if [ "$midi_mode" = 1 ] && { [ "${ALISA_MIDI_MATRIX:-0}" = 1 ] || [ "${ALISA_MIDI_EYES:-0}" = 1 ]; } && [ "${ALISA_LED_PREVIEW:-0}" != 1 ]; then
+        midi_clock_enabled=1
+        midi_clock_start
+    fi
     panel_encode ' 0 0 0 0 0 0 0 0 0'; panel_dark=$task_panel_encoded
     panel_requested=''; panel_painted=''
-    while IFS= read -r -t 2 task_led_command; do
-        if [ -n "$clock_pid" ]; then
+    midi_repeat=''; midi_misses=0
+    midi_interval=2
+    if [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ]; then midi_interval=0.02; fi
+    while :; do
+        midi_intermediate=0
+        # Startup/after release still needs the full heartbeat grace period.
+        # A short animation tick must not exit before the first frame arrives.
+        midi_read_timeout=$midi_interval
+        [ -n "$midi_repeat" ] || midi_read_timeout=2
+        if IFS= read -r -t "$midi_read_timeout" task_led_command; then
+            midi_misses=0
+            case "$task_led_command" in F\ *|B) midi_repeat=$task_led_command;; *) midi_repeat='';; esac
+        else
+            [ "$midi_interval" != 2 ] && [ -n "$midi_repeat" ] || break
+            midi_misses=$((midi_misses+1)); [ "$midi_misses" -lt 75 ] || break
+            task_led_command=$midi_repeat; midi_intermediate=1
+        fi
+        if [ "$midi_clock_enabled" = 1 ] && [ -z "$clock_pid" ] &&
+           [ "$midi_intermediate" = 0 ] && [ "$task_led_command" != 0 ] &&
+           [ "$midi_clock_attempts" -lt 3 ] && ring_now && [ "$ring_now" -ge "$midi_clock_retry_at" ]; then
+            midi_clock_start
+        fi
+        if [ -n "$clock_pid" ] && [ "$midi_intermediate" = 0 ]; then
             if ! kill -0 "$clock_pid" 2>/dev/null ||
-               ! printf '%s\n' "$task_led_command" >&3; then clock_stop; fi
+               ! printf '%s\n' "$task_led_command" >&3; then
+                clock_stop
+                if ring_now; then midi_clock_retry_at=$((ring_now+200)); fi
+            fi
         fi
         case "$task_led_command" in
             B) task_led_requested=$blue ;;
@@ -456,6 +577,7 @@ if [ "$panel_mode" = 1 ]; then
             continue
         fi
         if ! mini3_ring_ready; then
+            [ "$midi_intermediate" = 0 ] || continue
             case "$task_led_command" in F\ *) printf 'FRAME\n' ;; B) printf 'BLUE\n' ;; esac
             continue
         fi
@@ -471,7 +593,9 @@ if [ "$panel_mode" = 1 ]; then
             panel_owned=1
             task_led_acquired=1
         fi
-        if [ "$panel_requested" != "$task_led_requested" ]; then
+        if ring_now; then midi_anim_step=$((ring_now % 900)); fi
+        if [ "$panel_requested" != "$task_led_requested" ] ||
+           { [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ]; }; then
             panel_encode "$task_led_requested"
             panel_painted=$task_panel_encoded
             panel_requested=$task_led_requested
@@ -481,6 +605,8 @@ if [ "$panel_mode" = 1 ]; then
         if [ "$task_panel_current" != "$panel_painted" ]; then
             printf '%b' "$panel_painted" > "$PANEL_FB"
         fi
+        logo_paint
+        [ "$midi_intermediate" = 0 ] || continue
         case "$task_led_command" in
             F\ *) printf 'FRAME\n' ;;
             B) [ "$task_led_acquired" = 0 ] || printf 'BLUE\n' ;;

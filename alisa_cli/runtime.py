@@ -61,6 +61,9 @@ def native_environment(config):
     style=config['led'] if supports_lighting(config.get('model')) else 'off'
     lines=['export ALISA_LED_STYLE='+shlex.quote(style)]
     if config.get('model')=='bergamot':lines.append('export ALISA_MINI3_CLOCK_EYES=1')
+    if config.get('model')=='cucumber':
+        if config.get('midi_eyes',False):lines.append('export ALISA_MIDI_EYES=1')
+        elif config.get('midi_matrix',False):lines.append('export ALISA_MIDI_MATRIX=1')
     if config.get('disable_stun',False):lines.append('export ALISA_DISABLE_STUN=1')
     if config['vpn'].get('enabled',False):
         lines+=['export ALISA_VPN_REQUIRED=1','export ALISA_PROXY_URL=socks5h://127.0.0.1:18081','export ALISA_ICE_BIND_ADDRESS=172.31.254.1','export LD_PRELOAD='+TOOLS+'/mark.so']

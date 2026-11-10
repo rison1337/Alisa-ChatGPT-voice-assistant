@@ -143,7 +143,7 @@ def open_window(profile,proxy=None):
     env={**os.environ,'XDG_SESSION_TYPE':'x11'};env.pop('WAYLAND_DISPLAY',None)
     args=[chromium,'--user-data-dir='+str(profile),'--ozone-platform=x11','--no-first-run','--no-default-browser-check','--new-window']
     if proxy:args.append('--proxy-server='+proxy)
-    process=subprocess.Popen(args+['https://chatgpt.com/'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    process=subprocess.Popen(args+['https://chatgpt.com/auth/login'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
     time.sleep(.3)
     if process.poll() is not None and profile_pid(profile) is None:raise RuntimeError('Окно Chromium не открылось. Проверьте рабочий стол и доступность браузера.')
     return process.pid

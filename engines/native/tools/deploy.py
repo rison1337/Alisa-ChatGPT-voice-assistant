@@ -45,8 +45,8 @@ def profiles(launch,quasar,model=None):
                 if any(x.startswith('LD_PRELOAD=') for x in env):raise RuntimeError('Stock launcher already has a preload')
                 if kind=='--platformd':
                     extra=[f'LD_PRELOAD={BASE}/vqe_tap.so',f'ALICE_CAPTURE_SOCKET={RUNTIME}/microphone.sock']
-                    if model=='yandexmidi':
-                        # Whisper-level vqe_0 floats on Station 2; see vqe_tap.c.
+                    if model in ('yandexmidi','cucumber'):
+                        # Station 2 and locally tested Midi need capture gain 16.
                         extra.append('ALICE_CAPTURE_GAIN=16')
                 else:
                     extra=[f'LD_PRELOAD={BASE}/tts_gate.so',f'ALICE_QUASAR_CONFIG={BASE}/quasar.speech.json',
@@ -89,7 +89,7 @@ def main():
         'abseil-LICENSE':'abseil-cpp/LICENSE',
     }.items():files['licenses/'+name]=(ROOT/'research/upstream'/path).read_bytes()
     for name in ['native_agent','vqe_tap','tts_gate','mute_gpio']:files[name+'.so']=(ROOT/'build'/(name+'.so')).read_bytes()
-    for name in ['profile.sh','indicator.sh','run.sh','clock-eyes.sh','clock-display.sh','clock-isolation.sh']:files[name]=(ROOT/'station'/name).read_bytes()
+    for name in ['profile.sh','indicator.sh','run.sh','clock-eyes.sh','clock-display.sh','clock-isolation.sh','midi-clock.sh']:files[name]=(ROOT/'station'/name).read_bytes()
     if args.include_login:files['state/web-session.json']=(ROOT/'state/web-session.json').read_bytes()
     ssh(args.host,f'umask 077; mkdir -p {BASE}/bin {BASE}/state {BASE}/licenses; chmod 700 {BASE} {BASE}/state')
     hashes={}

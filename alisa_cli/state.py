@@ -64,5 +64,7 @@ def validate(value):
     if value.get('led_scope','speaking') not in LED_SCOPES:raise ValueError('Неизвестный режим подсветки')
     if not isinstance(value.get('listen_led',False),bool):raise ValueError('Подсветка в паузах должна быть включена или выключена')
     if not isinstance(value.get('disable_stun',False),bool):raise ValueError('Отключение STUN должно быть включено или выключено')
+    if not isinstance(value.get('midi_matrix',False),bool):raise ValueError('Матрица Миди должна быть включена или выключена')
+    if not isinstance(value.get('midi_eyes',False),bool):raise ValueError('Глаза Миди должны быть включены или выключены')
     if value.get('display','eyes') not in ('eyes','clock'):raise ValueError('Неизвестный режим дисплея')
     command_file(value['phrases'])
