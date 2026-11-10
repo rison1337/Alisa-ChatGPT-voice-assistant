@@ -296,8 +296,11 @@ def wizard(config):
     if yes('Проверить голос коротким тестовым ответом?',True):show(verify_with_stun_retry(config))
     ui.note(('Обновление завершено.' if updating else 'Установка завершена.')+' Управление доступно в меню.','green')
 
-def main(argv=None):
+def _main(argv=None):
     argv=list(sys.argv[1:] if argv is None else argv)
+    from . import devices
+    if not argv or argv[0] not in ('--version','-h','--help'):
+        devices.enter('bridge' if argv and argv[0]=='bridge' else 'native',argv)
     if argv and argv[0]=='update':
         try:return updates.command(argv[1:])
         except ui.Back:return 0
@@ -306,7 +309,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1/2, Мини 2/3 и Станция 2: нативный установщик Windows.' if sys.platform=='win32' else 'Лайт 1/2, Мини 2/3 и Станция 2: нативный GPT. Мост — Лайт 2 и Мини 2. Сначала выберите режим.')
     parser.add_argument('--version',action='version',version=__version__)
     parser.add_argument('mode',nargs='?',choices=MODES)
-    parser.add_argument('action',nargs='?',choices=['install','update','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
+    parser.add_argument('action',nargs='?',choices=['install','update','devices','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
     parser.add_argument('operation',nargs='?')
     parser.add_argument('--host');parser.add_argument('--port',type=int);parser.add_argument('--user');parser.add_argument('--identity')
     parser.add_argument('--dry-run',action='store_true');parser.add_argument('--yes',action='store_true');parser.add_argument('--no-start',action='store_true')
@@ -324,31 +327,51 @@ def main(argv=None):
             while True:
                 mode=requested_mode or pick('1/7 Alisa Voice — выберите режим',[(NAMES[x],x) for x in MODES]+[('Выход','exit')])
                 if mode=='exit':return 0
+                devices.enter(mode,[mode])
                 if not load(mode).get('installed'):
                     try:wizard(load(mode))
                     except ui.Back:
+                        if mode=='native' and len(devices.catalog()['devices'])>1:devices.choose()
                         requested_mode=None;continue
                     if not load(mode).get('installed'):
                         if args.mode:return 0
                         continue
+                pending_switch=None
                 def execute(action,operation=None):
+                    nonlocal pending_switch
                     forwarded=[mode,action]
                     if operation:forwarded.append(operation)
                     for key in ['host','port','user','identity','led','led_scope']:
                         if getattr(args,key) is not None:forwarded+=['--'+key.replace('_','-'),str(getattr(args,key))]
-                    return main(forwarded)
+                    try:return main(forwarded)
+                    except devices.Switch as request:
+                        pending_switch=request;return devices.SWITCHED
                 from . import menus
-                if menus.run(mode,execute)==130:return 130
+                result=menus.run(mode,execute)
+                if result==devices.SWITCHED:raise pending_switch
+                if result==130:return 130
                 if args.mode:return 0
         mode=args.mode or pick('1/7 Alisa Voice — выберите режим',[(NAMES[x],x) for x in MODES])
+        devices.enter(mode,[mode,*argv] if not args.mode else argv)
+        if args.action=='devices':
+            if mode!='native':raise ValueError('Выбор колонки доступен в нативном режиме')
+            devices.choose();return 0
         config=load(mode)
         if args.action=='update':return updates.command([args.operation] if args.operation else [])
         for key in ['host','port','user','identity']:
             if getattr(args,key) is not None:config[key]=getattr(args,key)
         if args.action!='help' and not (args.action in ('install','ssh') and not args.yes and not args.dry_run):validate(config)
         action=args.action
+        devices.require_current(config,action)
         if action=='install':
-            if args.dry_run or args.yes:
+            if args.operation=='components':
+                if mode!='native':raise ValueError('Обновление компонентов доступно в нативном режиме')
+                current=runtime.status(config)
+                if current.get('phase') in ('active','connecting','opening','starting','stopping'):
+                    raise RuntimeError('Сначала закройте голосовой чат выбранной колонки.')
+                from .install import install
+                show(install(config,activate=bool(current.get('agent_connected'))))
+            elif args.dry_run or args.yes:
                 from .install import install
                 show(install(config,activate=not args.no_start,dry_run=args.dry_run))
             else:wizard(config)
@@ -448,3 +471,15 @@ def main(argv=None):
         if isinstance(error,subprocess.SubprocessError):ui.note('Ошибка внешнего компонента; проверьте doctor и status.','red')
         else:ui.note(str(error),'red')
         return 1
+
+
+def main(argv=None):
+    from . import devices
+    try:return _main(argv)
+    except devices.Switch as request:
+        # Recursive menu actions must unwind the terminal before replacing it.
+        if argv is not None:raise
+        try:devices.restart(request)
+        except OSError:ui.note('Не удалось переключить колонку. Повторите запуск программы.','red');return 1
+    except (ValueError,RuntimeError,OSError) as error:
+        ui.note(str(error),'red');return 1

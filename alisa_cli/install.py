@@ -116,6 +116,9 @@ def install(config,activate=True,dry_run=False):
                 else:s.put(remote,data,0o700 if remote.endswith(('.sh','.so')) or '/bin/' in remote else 0o600)
             if was_running and changed:s.run(NATIVE+'/run.sh start',check=False)
             raise
+    if config['mode']=='native':
+        from .devices import bundle
+        config['native_bundle']=bundle()
     config['installed']=True;save(config)
     result={'mode':config['mode'],'installed':True,'started':bool(was_running and config['mode']=='native' and not changed)}
     if config['mode']=='native':

@@ -2,7 +2,10 @@ from __future__ import annotations
 import json,os,re,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-HOME=Path(os.environ.get('ALISA_HOME',Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData/Local'))/'AlisaVoice/state' if os.name=='nt' else Path.home()/'.local/state/alisa-voice'))
+BASE_HOME=Path(os.environ.get('ALISA_HOME',Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData/Local'))/'AlisaVoice/state' if os.name=='nt' else Path.home()/'.local/state/alisa-voice'))
+DEVICE=os.environ.get('ALISA_NATIVE_DEVICE','default')
+if DEVICE!='default' and not re.fullmatch('[0-9a-f]{32}',DEVICE):raise ValueError('Некорректный профиль колонки')
+HOME=BASE_HOME if DEVICE=='default' else BASE_HOME/'devices'/DEVICE
 MODES=('native','bridge')
 STYLES=('rainbow','red','blue','green','purple','white','pulse-red','pulse-blue','pulse-green','pulse-purple','pulse-white','off')
 STYLE_NAMES={'rainbow':'Радуга','red':'Красный','blue':'Синий','green':'Зелёный','purple':'Фиолетовый','white':'Белый','off':'Выключена'}
