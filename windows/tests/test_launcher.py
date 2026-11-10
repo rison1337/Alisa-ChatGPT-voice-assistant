@@ -26,6 +26,12 @@ def main():
  state=json.loads((device/'runtime.json').read_bytes())
  if args[0] in ('switch-update','switch-legacy-update'):
   from alisa_cli import devices
+  if os.environ.get('ALISA_FIXTURE_CHECK_MEMORY'):
+   import hashlib
+   from alisa_cli.windows_credentials import request
+   password=os.urandom(24).hex()
+   assert request(('fixture',2222,'root',None),'put',password)
+   (device/'password-digest').write_text(hashlib.sha256(password.encode()).hexdigest())
   if args[0]=='switch-legacy-update':os.environ.pop('ALISA_WINDOWS_DEVICE_HANDOFF',None)
   devices.restart(devices.Switch('a'*32,['native','fixture-update',*args[1:]]))
  if args[:2]==['native','fixture-update']:
@@ -38,6 +44,12 @@ def main():
   ui.interactive=lambda:os.environ.get('ALISA_FIXTURE_RELAUNCH')=='1'
   return updates.command(args[1:])
  mode,action=args[:2]
+ if os.environ.get('ALISA_FIXTURE_CHECK_MEMORY'):
+  import hashlib
+  from alisa_cli.windows_credentials import request
+  reply=request(('fixture',2222,'root',None),'get')
+  if not reply or hashlib.sha256((reply.get('password') or '').encode()).hexdigest()!=(device/'password-digest').read_text():
+   print('fixture_credential_missing');return 1
  if action=='status':print(json.dumps(state));return 0
  if action=='install':
   if '--dry-run' in args:return 0
@@ -71,8 +83,8 @@ class WindowsLauncher(unittest.TestCase):
     def package(cls, root, version):
         root.mkdir()
         shutil.copytree(ROOT / 'windows/runtime', root / 'windows/runtime')
-        names = ['alisa_cli/' + name + '.py' for name in ('app_install', 'errors', 'windows', 'state', 'updates', 'ui','devices','firmware')]
-        names += ['windows/install.py', 'windows/launcher.py', 'scripts/update_worker.py']
+        names = ['alisa_cli/' + name + '.py' for name in ('app_install', 'errors', 'windows', 'state', 'updates', 'ui','devices','firmware','windows_credentials')]
+        names += ['windows/install.py', 'windows/launcher.py','windows/credential_broker.py', 'scripts/update_worker.py']
         for name in names:
             target = root / name;target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
@@ -140,6 +152,7 @@ class WindowsLauncher(unittest.TestCase):
                     (profile/'session.json').write_bytes(b'synthetic second account')
                     original=(state/'session.json').read_bytes()
                     env['ALISA_FIXTURE_FAIL']='candidate' if failed else ''
+                    env['ALISA_FIXTURE_CHECK_MEMORY']='1'
                     action='switch-legacy-update' if legacy else 'switch-update'
                     result=self.launch(base,[action,'--archive',self.archive,'--version','2.0.0','--yes'],env,folder)
                     self.assertEqual(result.returncode,int(failed),result.stdout+result.stderr)

@@ -9,9 +9,23 @@ _passwords={}
 def credential_id(config):
     return (config['host'],config.get('port',2222),config.get('user') or 'root',config.get('known_hosts'))
 
+def remembered_password(config):
+    key=credential_id(config)
+    if key in _passwords:return _passwords[key]
+    from .windows_credentials import request
+    reply=request(key,'get')
+    if reply and isinstance(reply.get('password'),str):
+        _passwords[key]=reply['password'];return reply['password']
+    return None
+
+def share_password(config):
+    from .windows_credentials import request
+    password=remembered_password(config)
+    return password is not None and bool(request(credential_id(config),'put',password))
+
 def prepare(config):
     """Ask on the console thread, before dashboard workers start reading SSH."""
-    if config.get('ssh_auth')!='password' or credential_id(config) in _passwords:return
+    if config.get('ssh_auth')!='password' or remembered_password(config) is not None:return
     from . import ui
     if not ui.interactive() or threading.current_thread() is not threading.main_thread():
         raise PublicError('ssh_password_required')
@@ -28,7 +42,8 @@ def use_password(config,password,persist=True):
         from .state import save
         save(candidate)
     config.update(candidate)
-    if password!='':_passwords[credential_id(config)]=password
+    if password!='':
+        _passwords[credential_id(config)]=password;share_password(config)
     return {'ssh':True,'root':True,'key_saved':False}
 
 def library():
@@ -89,7 +104,7 @@ def connect(config,password=None):
     try:
         if password is None and config.get('ssh_auth')=='empty-password':password=''
         if password is None and config.get('ssh_auth')=='password':
-            password=_passwords.get(credential_id(config))
+            password=remembered_password(config)
             if password is None:raise PublicError('ssh_password_required')
         identity=config.get('identity') if password is None else None
         client.connect(config['host'],port=config.get('port',2222),username=config.get('user') or 'root',
@@ -99,6 +114,8 @@ def connect(config,password=None):
     except p.BadHostKeyException:client.close();raise PublicError('ssh_hostkey') from None
     except p.AuthenticationException:
         _passwords.pop(credential_id(config),None)
+        from .windows_credentials import request
+        request(credential_id(config),'clear')
         client.close();raise PublicError('ssh_auth') from None
     except PublicError:client.close();raise
     except (OSError,p.SSHException):client.close();raise PublicError('ssh_unreachable') from None

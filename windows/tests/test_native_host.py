@@ -196,11 +196,12 @@ class BrowserAndPackageTests(unittest.TestCase):
             self.assertEqual(cli.main(['native','status','--identity','existing-key']),0)
         self.assertEqual(status.call_args.args[0]['identity'],'existing-key')
         self.assertNotIn('ssh_auth',status.call_args.args[0])
-    def test_updater_does_not_handoff_a_memory_only_password(self):
+    def test_updater_refuses_password_without_supervisor_memory(self):
         from alisa_cli import updates,runtime
         config=defaults('native');config.update(host='192.0.2.1',installed=True,ssh_auth='password')
         with patch.object(updates.sys,'platform','win32'),patch.object(updates,'load',return_value=config),patch.object(runtime,'status') as status:
-            with self.assertRaisesRegex(RuntimeError,'Непустой пароль хранится только'):updates.mode_plan()
+            with patch.object(winssh,'prepare'),patch.object(winssh,'share_password',return_value=False):
+                with self.assertRaisesRegex(RuntimeError,'запустите установленный alisa.cmd'):updates.mode_plan()
         status.assert_not_called()
     def test_reinstall_keeps_state_unknown_files_and_previous_copy(self):
         source=Path(__file__).resolve().parents[1]/'install.py'

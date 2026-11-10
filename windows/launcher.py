@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from credential_broker import session,ENVIRONMENT
 
 HANDOFF = 'ALISA_WINDOWS_HANDOFF'
 SCHEDULED = 75
@@ -29,14 +30,18 @@ def run(arguments, directory, environment):
 def main():
     base = Path(__file__).resolve().parents[2]
     app = base / 'app'
+    arguments = sys.argv[1:]
+    initial_device=None
+    if arguments[:1]==['--native-device']:
+        if len(arguments)<2 or not re.fullmatch(r'default|[0-9a-f]{32}',arguments[1]):raise ValueError('Invalid profile')
+        initial_device=arguments[1];arguments=arguments[2:]
     os.chdir(base)
     folder = Path(tempfile.mkdtemp(prefix='.launcher-run-', dir=base))
     request = folder / 'handoff.json'
     environment = {**os.environ, HANDOFF: str(request),'ALISA_WINDOWS_DEVICE_HANDOFF':'1'}
-    arguments = sys.argv[1:]
-    if arguments[:1]==['--native-device']:
-        if len(arguments)<2 or not re.fullmatch(r'default|[0-9a-f]{32}',arguments[1]):raise ValueError('Invalid profile')
-        environment['ALISA_NATIVE_DEVICE']=arguments[1];arguments=arguments[2:]
+    broker,specification=session(environment.get(ENVIRONMENT))
+    environment[ENVIRONMENT]=specification
+    if initial_device is not None:environment['ALISA_NATIVE_DEVICE']=initial_device
     update_error = 0
     try:
         while True:
@@ -77,6 +82,7 @@ def main():
             # A successful menu exit must not erase a failed update's result.
             arguments = []
     finally:
+        if broker:broker.close()
         try:
             request.unlink(missing_ok=True)
             folder.rmdir()

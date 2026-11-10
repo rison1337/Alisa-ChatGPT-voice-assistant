@@ -9,10 +9,10 @@ PACKAGE='alisa-voice-windows-native'
 
 def install_launcher(base):
     # A waiting interpreter inside app would keep its Windows DLLs locked.
-    files={'launcher.py':(ROOT/'windows/launcher.py').read_bytes()}
+    files={name:(ROOT/'windows'/name).read_bytes() for name in ('launcher.py','credential_broker.py')}
     for path in (ROOT/'windows/runtime').iterdir():
         if path.is_file():files['runtime/'+path.name]=path.read_bytes()
-    files['runtime/python313._pth']=b'python313.zip\n.\n'
+    files['runtime/python313._pth']=b'python313.zip\n.\n..\n'
     identity=hashlib.sha256()
     for name,data in sorted(files.items()):
         identity.update(name.encode()+b'\0'+hashlib.sha256(data).digest())
