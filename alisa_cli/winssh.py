@@ -3,6 +3,34 @@ import base64,hashlib,select,socket,subprocess,threading,time
 from pathlib import Path
 from .errors import PublicError
 
+# Passwords never enter config, argv, environment, or update handoff files.
+_passwords={}
+
+def credential_id(config):
+    return (config['host'],config.get('port',2222),config.get('user') or 'root',config.get('known_hosts'))
+
+def prepare(config):
+    """Ask on the console thread, before dashboard workers start reading SSH."""
+    if config.get('ssh_auth')!='password' or credential_id(config) in _passwords:return
+    from . import ui
+    if not ui.interactive() or threading.current_thread() is not threading.main_thread():
+        raise PublicError('ssh_password_required')
+    password=ui.secret('Пароль SSH колонки')
+    try:use_password(config,password,persist=False)
+    finally:password=None
+
+def use_password(config,password,persist=True):
+    """Verify existing access; never install keys or change the SSH server."""
+    candidate={**config,'identity':None,'ssh_auth':'empty-password' if password=='' else 'password'}
+    result=run(candidate,'id -u',password=password)
+    if result.stdout.strip()!=b'0':raise RuntimeError('SSH работает, но у пользователя нет прав root.')
+    if persist:
+        from .state import save
+        save(candidate)
+    config.update(candidate)
+    if password!='':_passwords[credential_id(config)]=password
+    return {'ssh':True,'root':True,'key_saved':False}
+
 def library():
     try:import paramiko;return paramiko
     except ImportError:raise RuntimeError('Неполный Windows-пакет: отсутствует Paramiko. Повторите установку CLI.') from None
@@ -59,13 +87,20 @@ def connect(config,password=None):
     if not known or not Path(known).is_file():raise RuntimeError('Сначала подтвердите SSH-ключ колонки через настройку подключения.')
     client.load_host_keys(str(known));client.set_missing_host_key_policy(p.RejectPolicy())
     try:
+        if password is None and config.get('ssh_auth')=='empty-password':password=''
+        if password is None and config.get('ssh_auth')=='password':
+            password=_passwords.get(credential_id(config))
+            if password is None:raise PublicError('ssh_password_required')
         identity=config.get('identity') if password is None else None
         client.connect(config['host'],port=config.get('port',2222),username=config.get('user') or 'root',
                        password=password,key_filename=str(identity) if identity else None,
                        allow_agent=False,look_for_keys=False,timeout=8,banner_timeout=12,auth_timeout=12)
         client.get_transport().set_keepalive(5);return client
     except p.BadHostKeyException:client.close();raise PublicError('ssh_hostkey') from None
-    except p.AuthenticationException:client.close();raise PublicError('ssh_auth') from None
+    except p.AuthenticationException:
+        _passwords.pop(credential_id(config),None)
+        client.close();raise PublicError('ssh_auth') from None
+    except PublicError:client.close();raise
     except (OSError,p.SSHException):client.close();raise PublicError('ssh_unreachable') from None
 
 def run(config,command,data=None,check=True,timeout=60,password=None):

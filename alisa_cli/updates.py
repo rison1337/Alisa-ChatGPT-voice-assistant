@@ -218,6 +218,8 @@ def mode_plan():
         config = load(mode)
         if not config.get('installed'):
             continue
+        if sys.platform == 'win32' and config.get('ssh_auth') == 'password':
+            raise RuntimeError('Обновление в отдельном процессе требует пустого пароля SSH или существующего ключа. Непустой пароль хранится только в текущем окне; установите новый Windows-пакет через START-WINDOWS.cmd.')
         state = runtime.status(config)
         if state.get('voice_active') or state.get('phase') in ('active', 'connecting', 'opening', 'starting', 'stopping'):
             raise RuntimeError('Сначала закройте голосовой чат и дождитесь готовности Алисы. Обновление не началось.')
