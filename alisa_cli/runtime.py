@@ -77,6 +77,13 @@ def lighting_scope_preference(config):
     style=config['led'] if supports_lighting(config.get('model')) else 'off'
     return (scope+' '+style+'\n').encode()
 
+def midi_display_preference(config):
+    from .display import preference
+    return (preference(config)+'\n').encode()
+
+def midi_fire_preference(config):
+    return b'1\n' if config.get('midi_fire',False) else b'0\n'
+
 def apply_settings(config):
     s=Station(config);mode=config['mode'];base=NATIVE if mode=='native' else '/data/opt/alice-voice'
     s.put(base+'/commands.txt',command_file(config['phrases']))
@@ -86,6 +93,9 @@ def apply_settings(config):
         s.put(NATIVE+'/listen-led',listening_preference(config))
         s.put(NATIVE+'/led-scope',lighting_scope_preference(config))
         if config.get('model')=='bergamot':s.put(NATIVE+'/display-mode',(config.get('display','eyes')+'\n').encode())
+        if config.get('model')=='cucumber':
+            s.put(NATIVE+'/midi-display',midi_display_preference(config))
+            s.put(NATIVE+'/midi-fire',midi_fire_preference(config))
         if vpn:
             s.run(TOOLS+'/vpn.sh guard')
             s.put(TOOLS+'/vpn-required',b'required\n')
@@ -98,7 +108,10 @@ def update_preferences(config,previous):
     listening=config.get('listen_led',False)!=previous.get('listen_led',False)
     scope=config.get('led_scope','speaking')!=previous.get('led_scope','speaking')
     display=config['mode']=='native' and config.get('model')=='bergamot' and config.get('display','eyes')!=previous.get('display','eyes')
-    if not config.get('installed') or not (phrases or led or listening or scope or display):return
+    midi=config['mode']=='native' and config.get('model')=='cucumber'
+    midi_display=midi and midi_display_preference(config)!=midi_display_preference(previous)
+    midi_fire=midi and midi_fire_preference(config)!=midi_fire_preference(previous)
+    if not config.get('installed') or not (phrases or led or listening or scope or display or midi_display or midi_fire):return
     native=config['mode']=='native';station=Station(config)
     current=status(config) if native and led else {}
     live=bool(current.get('pid') or current.get('agent_connected'))
@@ -107,6 +120,8 @@ def update_preferences(config,previous):
     base=NATIVE if native else '/data/opt/alice-voice'
     try:
         if display:station.put(NATIVE+'/display-mode',(config.get('display','eyes')+'\n').encode())
+        if midi_display:station.put(NATIVE+'/midi-display',midi_display_preference(config))
+        if midi_fire:station.put(NATIVE+'/midi-fire',midi_fire_preference(config))
         if phrases:station.put(base+'/commands.txt',command_file(config['phrases']))
         if native and (led or listening):station.put(NATIVE+'/listen-led',listening_preference(config))
         if native and (led or scope):station.put(NATIVE+'/led-scope',lighting_scope_preference(config))
@@ -117,6 +132,10 @@ def update_preferences(config,previous):
     except BaseException:
         # Restore this small preference transaction without restarting audio.
         import contextlib
+        with contextlib.suppress(Exception):
+            if midi_display:station.put(NATIVE+'/midi-display',midi_display_preference(previous))
+        with contextlib.suppress(Exception):
+            if midi_fire:station.put(NATIVE+'/midi-fire',midi_fire_preference(previous))
         with contextlib.suppress(Exception):
             if native and (led or scope):station.put(NATIVE+'/led-scope',lighting_scope_preference(previous))
         with contextlib.suppress(Exception):

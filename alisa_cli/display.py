@@ -6,6 +6,11 @@ from .ssh import Station
 
 MODES=(('Анимированные глаза','eyes'),('Штатные часы','clock'))
 
+def preference(config):
+    if config.get('model')=='cucumber':
+        return 'eyes' if config.get('midi_eyes',False) else 'matrix' if config.get('midi_matrix',False) else 'clock'
+    return config.get('display','eyes')
+
 
 class Preview:
     def __init__(self,config):
@@ -80,8 +85,11 @@ ALISA_CLOCK_PREVIEW=1 ALISA_CLOCK_STATUS_BASE=/data/opt/alisa-standalone sh "$de
 
 
 def choose(config):
+    if config['mode']=='native' and config.get('model')=='cucumber':
+        return ui.select('Дисплей Миди — со следующего разговора',
+            [('Штатные часы','clock'),('Глаза во время ответа','eyes'),('Матрица цифр','matrix')],default=preference(config))
     if config['mode']!='native' or config.get('model')!='bergamot':
-        raise ValueError('Выбор дисплея доступен только для Мини 3 в нативном режиме')
+        raise ValueError('Выбор дисплея доступен для Мини 3 и Миди в нативном режиме')
     current=config.get('display','eyes')
     if not ui.interactive():return ui.select('Дисплей во время GPT',MODES,default=current)
     demo=Preview(config);chosen=[]

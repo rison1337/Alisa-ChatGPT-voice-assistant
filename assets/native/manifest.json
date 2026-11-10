@@ -3,7 +3,7 @@
   "model": "plum+micro+mini2+yandexmidi+bergamot+cucumber",
   "architecture": "armhf",
   "audio_engine": "WebRTC NetEq",
-  "revision": 11,
+  "revision": 12,
   "files": {
     "native_agent.so": "c9a6691860401f3d802b374a8a54bbf473d2a5f7d7b12607919c8b0a50a65585",
     "vqe_tap.so": "b897088cf000590e2c452d47896d18b0d9483b56d360078bfdaa960b609bd28e",
@@ -32,7 +32,7 @@
     "clock-eyes.sh": "98de14a23397e8121ddbe369d0a9b778f21c50f9bbad9c73c0e149f26677b47f",
     "clock-display.sh": "070d0fdd497c087b88bd950986673972580d6860ca27424dba67c7596b26af9e",
     "clock-isolation.sh": "bf9169e6078f2ed4a164b05a3ec33db0c24f7450a07a3a79c2e7d5901f73bf73",
-    "indicator.sh": "cfcf5f7a697eb01999697904601ba666245d11ad97de4db116c4b3479feee2be",
+    "indicator.sh": "cf0a7ccc146a98bbf16045009bf6fde17c817290bc168141eec2c6ef9799ff0c",
     "midi-clock.sh": "66ce29a7b94ac9fe1b9e64ab40bd7e3b42382d9347b1bae1fa08364e035d15d2"
   }
 }

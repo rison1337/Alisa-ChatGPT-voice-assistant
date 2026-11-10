@@ -30,7 +30,7 @@ class TerminalUI(unittest.TestCase):
    if child.isalive():child.terminate(force=True)
  def menu_item(self,child,page,value,enter=True):
   from alisa_cli import menus,state
-  config=state.defaults('native');config['vpn']['enabled']=True
+  config=state.defaults('native');config['vpn']['enabled']=True;config['installed']=True
   index=next(i for i,(_,target) in enumerate(menus.entries('native',page,config)) if target==value)
   child.send('\x1b[H'+'\x1b[B'*index+('\r' if enter else ''))
  def test_arrows_select_and_space_checks(self):

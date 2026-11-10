@@ -45,7 +45,7 @@ while IFS= read -r command; do [ "$command" != 0 ] || exit 0; done
             gpio.write_text('gpio-505 ( |mute-switch ) in hi\n')
             env={**os.environ,'ALICE_MIDI_FB':str(ring),'ALISA_MIDI_LOGO_FB':str(logo),
                  'ALICE_MUTE_GPIO_STATUS':str(gpio),'ALISA_LED_PREVIEW':'0',
-                 'ALISA_MIDI_MATRIX':'0','ALISA_LED_STYLE':'rainbow'}
+                 'ALISA_MIDI_MATRIX':'0','ALISA_LED_STYLE':'rainbow','ALISA_MIDI_FIRE':'1','ALISA_MIDI_FIRE_FILE':''}
             process=subprocess.Popen(['bash',str(ROOT/'assets/native/indicator.sh')],
                 stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env)
             try:

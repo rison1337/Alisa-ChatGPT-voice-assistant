@@ -80,18 +80,20 @@ def settings(config,apply=True,fields=('phrases','led')):
         config['led']=lighting.choose(config)
     if 'display' in fields:
         from . import display
-        config['display']=display.choose(config)
+        chosen=display.choose(config)
+        if config.get('model')=='cucumber':config.update(midi_eyes=chosen=='eyes',midi_matrix=chosen=='matrix')
+        else:config['display']=chosen
     validate(config)
     if apply:save_preferences(config,previous)
     else:ui.note('Настройки выбраны.','green')
 
 def save_preferences(config,previous):
-    fields={'phrases':None,'led':None,'listen_led':False,'led_scope':'speaking','display':'eyes'}
+    fields={'phrases':None,'led':None,'listen_led':False,'led_scope':'speaking','display':'eyes','midi_eyes':False,'midi_matrix':False,'midi_fire':False}
     if all(config.get(key,default)==previous.get(key,default) for key,default in fields.items()):
         ui.note('Настройки не изменились.');return
     runtime.update_preferences(config,previous)
     save(config);ui.note('Настройки сохранены.','green')
-    if config.get('display','eyes')!=previous.get('display','eyes'):
+    if any(config.get(key,default)!=previous.get(key,default) for key,default in [('display','eyes'),('midi_eyes',False),('midi_matrix',False)]):
         ui.note('Режим дисплея применится со следующего разговора GPT.')
 
 def setup_key(config,allow_saved=False):
@@ -230,7 +232,7 @@ def installation_options(config,network_result):
         settings(config,apply=False,fields=('phrases',))
     ui.note('Подсветка GPT','bold')
     settings(config,apply=False,fields=('led',))
-    if config['mode']=='native' and config.get('model')=='bergamot':
+    if config['mode']=='native' and config.get('model') in ('bergamot','cucumber'):
         ui.note('Дисплей во время GPT','bold')
         settings(config,apply=False,fields=('display',))
     return {'use_vpn':use_vpn,'source':source,'selection':selection,'vpn_autostart':vpn_auto}
@@ -420,6 +422,9 @@ def _main(argv=None):
             elif args.led:
                 previous=copy.deepcopy(config);config['led']=args.led
                 save_preferences(config,previous)
+            elif args.operation in ('midi-fire-on','midi-fire-off'):
+                if mode!='native' or config.get('model')!='cucumber':raise ValueError('Пламя доступно только на Миди')
+                previous=copy.deepcopy(config);config['midi_fire']=args.operation=='midi-fire-on';save_preferences(config,previous)
             elif args.operation in ('phrases','led','display'):settings(config,fields=(args.operation,))
             else:settings(config)
         elif action=='autostart':

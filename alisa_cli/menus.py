@@ -27,13 +27,16 @@ def entries(mode,page,config=None):
         values=[('Голосовые фразы',('settings','phrases'))]
         if supports_lighting(config.get('model')):values.append(('Подсветка','@lighting' if mode=='native' else ('settings','led')))
         if mode=='native':
-            if config.get('model')=='bergamot':values.append(('Дисплей GPT',('settings','display')))
+            if config.get('model') in ('bergamot','cucumber'):values.append(('Дисплей GPT',('settings','display')))
             values.append(('Голос GPT',('voice',None)))
             values.append(('STUN: '+('отключён' if config.get('disable_stun',False) else 'включён'),('settings','stun')))
         values+=auto_entries(mode,config)
     elif page=='lighting':
         values=[('Цвет и анимация',('settings','led')),
                 ('Когда включать: '+LED_SCOPE_NAMES[config.get('led_scope','speaking')].lower(),('settings','led-scope'))]
+        if config.get('model')=='cucumber':
+            values.append((('[✓]' if config.get('midi_fire',False) else '[ ]')+' Пламя вместо радуги',
+                           ('settings','midi-fire-off' if config.get('midi_fire',False) else 'midi-fire-on')))
         if config.get('led_scope','speaking')=='speaking':
             values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
     elif page=='account':values=[('Войти',('login',None)),('Сменить аккаунт',('login','change')),('Выйти из аккаунта',('logout',None))]
@@ -64,7 +67,7 @@ def run(mode,execute,start_page='main'):
         old=previous.get(page)
         if isinstance(old,tuple) and old not in [value for _,value in values]:
             candidates=[value for _,value in values if isinstance(value,tuple) and value[0]==old[0] and
-                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')) or (old[0]=='update' and value[1] in ('ask-on','ask-off')) or (old[0]=='settings' and value[1] in ('listen-on','listen-off')))]
+                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')) or (old[0]=='update' and value[1] in ('ask-on','ask-off')) or (old[0]=='settings' and value[1] in ('listen-on','listen-off','midi-fire-on','midi-fire-off')))]
             if candidates:previous[page]=candidates[0]
         endpoint=(configuration.get('host') or 'IP ещё не указан')+':'+str(configuration.get('port') or 2222)
         subtitle=endpoint+'  ·  '+('Установлен' if configuration.get('installed') else 'Требуется установка')
@@ -125,7 +128,12 @@ def run(mode,execute,start_page='main'):
                      'network':'Проверяю доступность ChatGPT…','storage':'Считаю свободное место…','help':'Открываю описание установки…'}
             return ui.FocusContent(describe(waiting[request[0]],choice),True)
         if choice=='@settings':return ui.FocusContent(phrase_summary()+'\n\nПодсветка: '+led_name()+'\n\n'+auto_summary())
-        if choice==('settings','display'):return ui.FocusContent('Дисплей во время GPT: '+('Штатные часы' if configuration.get('display','eyes')=='clock' else 'Анимированные глаза')+'\n\nВыбор с предпросмотром на Мини 3. После предпросмотра возвращаются часы. Выбор применяется со следующего разговора GPT.')
+        if choice==('settings','display'):
+            from .display import preference
+            names={'clock':'Штатные часы','eyes':'Анимированные глаза','matrix':'Матрица цифр'}
+            return ui.FocusContent('Дисплей во время GPT: '+names[preference(configuration)]+'\n\nВыбор применяется со следующего разговора GPT.')
+        if choice in (('settings','midi-fire-on'),('settings','midi-fire-off')):
+            return ui.FocusContent('Красно-оранжевое пламя вместо радуги на кольце и логотипе Миди. Остальные выбранные цвета сохраняются. По умолчанию выключено.')
         if choice==('settings','stun'):return ui.FocusContent('STUN: '+('отключён' if configuration.get('disable_stun',False) else 'включён')+'\n\nСтандартный режим — STUN включён. При ice_gather_timeout можно попробовать отключить его. Результат зависит от сети. Изменение применяется после перезапуска GPT.')
         if choice==('settings','phrases'):return ui.FocusContent(phrase_summary())
         if choice=='@lighting' or choice==('settings','led-scope'):return ui.FocusContent('Подсветка: '+led_name()+'\n'+LED_SCOPE_NAMES[configuration.get('led_scope','speaking')]+'\n\nПо умолчанию выбранный эффект включён только во время ответа GPT. Можно также включить его во время прослушивания и ожидания ответа, пока чат открыт. При выключенном микрофоне приоритет остаётся у штатной индикации.')

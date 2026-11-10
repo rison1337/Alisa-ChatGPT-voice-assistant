@@ -86,6 +86,15 @@ blue=' 0 0 160 0 0 160 0 0 160'
 listen=${ALISA_LISTEN_LED:-0}
 listen_file=${ALISA_LISTEN_LED_FILE-/data/opt/alisa-standalone/listen-led}
 scope_file=${ALISA_LED_SCOPE_FILE-/data/opt/alisa-standalone/led-scope}
+midi_fire_enabled() {
+    [ "$midi_mode" = 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] || return 1
+    task_midi_fire=${ALISA_MIDI_FIRE:-0}
+    task_midi_fire_file=${ALISA_MIDI_FIRE_FILE-/data/opt/alisa-standalone/midi-fire}
+    if [ -n "$task_midi_fire_file" ] && [ -r "$task_midi_fire_file" ]; then
+        IFS= read -r task_midi_fire < "$task_midi_fire_file" || return 1
+    fi
+    [ "$task_midi_fire" = 1 ]
+}
 listening_enabled() {
     task_led_style=''
     if [ -n "$scope_file" ] && [ -r "$scope_file" ]; then
@@ -323,8 +332,7 @@ panel_read() {
     task_panel_current=${task_panel_snapshot#* }
 }
 panel_encode() {
-    if [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] &&
-       [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] && [ "$1" != ' 0 0 0 0 0 0 0 0 0' ]; then
+    if midi_fire_enabled && [ "$1" != ' 0 0 0 0 0 0 0 0 0' ]; then
         # Continuous red/amber lobes: no integer phase steps or hard tail edges.
         task_panel_encoded=$(awk -v t="$midi_anim_step" 'BEGIN {
             phase=t*24/60;
@@ -443,7 +451,7 @@ logo_paint() {
         logo_owned=0;logo_blocked=1;return 0
     fi
     if [ "$logo_owned" = 0 ]; then logo_saved=$logo_current;logo_owned=1;fi
-    if [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] &&
+    if midi_fire_enabled &&
        [ "$task_led_requested" != ' 0 0 0 0 0 0 0 0 0' ]; then
         logo_painted=$(awk -v t="$midi_anim_step" 'BEGIN {
             for(p=0;p<6;p++) {
@@ -500,6 +508,15 @@ if [ "$panel_mode" = 1 ]; then
     trap 'exit 0' TERM INT HUP
     trap panel_finish EXIT
     clock_mode=eyes
+    if [ "$midi_mode" = 1 ]; then
+        midi_display_file=${ALISA_MIDI_DISPLAY_FILE:-$(dirname -- "$0")/midi-display}
+        if [ -r "$midi_display_file" ]; then
+            IFS= read -r midi_display < "$midi_display_file" || midi_display=clock
+            ALISA_MIDI_EYES=0; ALISA_MIDI_MATRIX=0
+            case "$midi_display" in eyes) ALISA_MIDI_EYES=1;; matrix) ALISA_MIDI_MATRIX=1;; esac
+            export ALISA_MIDI_EYES ALISA_MIDI_MATRIX
+        fi
+    fi
     clock_mode_file=${ALISA_CLOCK_MODE_FILE:-$(dirname -- "$0")/display-mode}
     if [ -e "$clock_mode_file" ]; then
         clock_mode=$(cat "$clock_mode_file" 2>/dev/null) || clock_mode=clock
@@ -535,15 +552,25 @@ if [ "$panel_mode" = 1 ]; then
     panel_requested=''; panel_painted=''
     midi_repeat=''; midi_misses=0
     midi_interval=2
-    if [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ]; then midi_interval=0.02; fi
+    if midi_fire_enabled; then midi_interval=0.02; fi
     while :; do
         midi_intermediate=0
+        midi_interval=2
+        if midi_fire_enabled; then midi_interval=0.02; fi
         # Startup/after release still needs the full heartbeat grace period.
         # A short animation tick must not exit before the first frame arrives.
         midi_read_timeout=$midi_interval
         [ -n "$midi_repeat" ] || midi_read_timeout=2
         if IFS= read -r -t "$midi_read_timeout" task_led_command; then
             midi_misses=0
+            case "$task_led_command" in
+                STYLE\ *)
+                    case "${task_led_command#STYLE }" in
+                        rainbow|red|blue|green|purple|white|off|pulse-red|pulse-blue|pulse-green|pulse-purple|pulse-white)
+                            ALISA_LED_STYLE=${task_led_command#STYLE };;
+                    esac
+                    continue;;
+            esac
             case "$task_led_command" in F\ *|B) midi_repeat=$task_led_command;; *) midi_repeat='';; esac
         else
             [ "$midi_interval" != 2 ] && [ -n "$midi_repeat" ] || break
@@ -595,7 +622,7 @@ if [ "$panel_mode" = 1 ]; then
         fi
         if ring_now; then midi_anim_step=$((ring_now % 900)); fi
         if [ "$panel_requested" != "$task_led_requested" ] ||
-           { [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ]; }; then
+           midi_fire_enabled; then
             panel_encode "$task_led_requested"
             panel_painted=$task_panel_encoded
             panel_requested=$task_led_requested
