@@ -21,7 +21,9 @@ def parse_link(link):
         if not 1<=port<=65535 or re.search(r'[\s\x00-\x1f]',server):raise ValueError()
     except (ValueError,TypeError):raise ValueError('Некорректная ссылка VLESS') from None
     if (q.get('encryption') or 'none')!='none':raise ValueError('Неизвестное шифрование VLESS')
-    transport=q.get('type') or 'tcp';security=q.get('security') or 'none'
+    transport=q.get('type') or 'tcp'
+    if transport=='raw':transport='tcp'  # some panels spell plain TCP as "raw"
+    security=q.get('security') or 'none'
     if transport not in ['tcp','ws','grpc','httpupgrade','xhttp']:raise ValueError('Транспорт VLESS пока не поддерживается: '+re.sub('[^a-z0-9]','',transport))
     if security not in ['none','tls','reality']:raise ValueError('Неизвестный режим TLS VLESS')
     result={'type':'vless','tag':'gpt-vless','server':server,'server_port':port,'uuid':identity,'packet_encoding':'xudp'}
@@ -54,6 +56,51 @@ def parse_link(link):
                 raise ValueError('XHTTP extra содержит неподдерживаемые параметры')
         result['_engine']='xray'
         result['transport']={'type':'xhttp','path':q.get('path') or '/','host':q.get('host',''),'mode':mode,'extra':extra}
+    name=label(unquote(u.fragment))
+    check_notice(name)
+    if name:result['_name']=name
+    return result
+
+def parse_hy2(link):
+    # Hysteria 2: hysteria2://password@host:port?sni=...&obfs=salamander&obfs-password=...
+    try:
+        u=urlsplit(link.strip());q={k:v[-1] for k,v in parse_qs(u.query,keep_blank_values=True).items()}
+        if u.scheme not in ('hy2','hysteria2') or not u.hostname or not u.username:raise ValueError()
+        password=unquote(u.username);port=u.port or 443;server=u.hostname
+        if not 1<=port<=65535 or re.search(r'[\s\x00-\x1f]',server):raise ValueError()
+    except (ValueError,TypeError):raise ValueError('Некорректная ссылка Hysteria 2') from None
+    if q.get('insecure','0').lower() in ['1','true']:raise ValueError('Ссылка просит отключить проверку TLS; исправьте настройки сервера')
+    result={'type':'hysteria2','tag':'gpt-vless','server':server,'server_port':port,'password':password,
+            'tls':{'enabled':True,'server_name':q.get('sni') or q.get('peer') or server}}
+    obfs=q.get('obfs')
+    if obfs:
+        if obfs!='salamander':raise ValueError('Неизвестное маскирование Hysteria 2: '+re.sub('[^a-z0-9]','',obfs))
+        result['obfs']={'type':'salamander','password':q.get('obfs-password','')}
+    name=label(unquote(u.fragment))
+    check_notice(name)
+    if name:result['_name']=name
+    return result
+
+def parse_tuic(link):
+    # TUIC: tuic://uuid:password@host:port?sni=...&congestion_control=bbr&alpn=h3
+    try:
+        u=urlsplit(link.strip());q={k:v[-1] for k,v in parse_qs(u.query,keep_blank_values=True).items()}
+        if u.scheme!='tuic' or not u.hostname or not u.username:raise ValueError()
+        identity=str(uuid.UUID(unquote(u.username)));password=unquote(u.password or '')
+        port=u.port or 443;server=u.hostname
+        if not 1<=port<=65535 or re.search(r'[\s\x00-\x1f]',server):raise ValueError()
+    except (ValueError,TypeError):raise ValueError('Некорректная ссылка TUIC') from None
+    if not password:raise ValueError('В ссылке TUIC нет пароля')
+    if q.get('allow_insecure','0').lower() in ['1','true']:raise ValueError('Ссылка просит отключить проверку TLS; исправьте настройки сервера')
+    congestion=q.get('congestion_control') or 'bbr'
+    if congestion not in ['bbr','cubic','new_reno']:raise ValueError('Неизвестный алгоритм управления перегрузкой TUIC')
+    relay=q.get('udp_relay_mode','')
+    if relay and relay not in ['native','quic']:raise ValueError('Неизвестный режим UDP TUIC')
+    result={'type':'tuic','tag':'gpt-vless','server':server,'server_port':port,'uuid':identity,'password':password,
+            'congestion_control':congestion,
+            'tls':{'enabled':True,'server_name':q.get('sni') or server}}
+    if relay:result['udp_relay_mode']=relay
+    if q.get('alpn'):result['tls']['alpn']=[x for x in q['alpn'].split(',') if x]
     name=label(unquote(u.fragment))
     check_notice(name)
     if name:result['_name']=name
@@ -157,11 +204,14 @@ def subscription(text):
         except (yaml.YAMLError,RecursionError):raise ValueError('Некорректный YAML подписки') from None
         if not result:raise ValueError('В YAML нет поддерживаемых серверов VLESS')
         return result,rejected
-    links=[x.strip() for x in text.splitlines() if x.strip().startswith('vless://')]
-    if not links:raise ValueError('Нет ссылок VLESS: поддерживаются текстовые и Base64-подписки')
+    links=[x.strip() for x in text.splitlines() if x.strip().startswith(('vless://','hy2://','hysteria2://','tuic://'))]
+    if not links:raise ValueError('Нет ссылок VLESS/Hysteria 2/TUIC: поддерживаются текстовые и Base64-подписки')
     result=[];rejected=0
     for link in links[:256]:
-        try:result.append(parse_link(link))
+        try:
+            if link.startswith('vless://'):result.append(parse_link(link))
+            elif link.startswith('tuic://'):result.append(parse_tuic(link))
+            else:result.append(parse_hy2(link))
         except SubscriptionNotice:raise
         except ValueError:rejected+=1
     if not result:raise ValueError('Все серверы подписки используют неподдерживаемые параметры')
@@ -190,6 +240,27 @@ def core_config(outbound):
                    'auto_route':False,'mtu':1400,'stack':'gvisor'},
                   {'type':'socks','tag':'gpt-socks','listen':'127.0.0.1','listen_port':18081}],
       'outbounds':[{k:v for k,v in outbound.items() if not k.startswith('_')}],'route':{'final':'gpt-vless','auto_detect_interface':True}}
+
+# Public "no content" endpoint: request latency through a server is the honest
+# measure of its speed; ping (ICMP) says nothing about the proxied path.
+PROBE_URL='https://www.gstatic.com/generate_204'
+
+def auto_config(nodes,url=None):
+    # One outbound per server plus a urltest group tagged like the single
+    # outbound used to be, so routes and health checks stay unchanged.
+    items=[];tags=[]
+    for index,item in enumerate(nodes):
+        node={k:v for k,v in item.items() if not k.startswith('_')}
+        node['tag']='gpt-node-'+str(index)
+        tags.append(node['tag']);items.append(node)
+    if not tags:raise ValueError('Нет серверов для автоматического выбора')
+    items.append({'type':'urltest','tag':'gpt-vless','outbounds':tags,'url':url or PROBE_URL,
+                  'interval':'3m','tolerance':50})
+    return {'log':{'level':'warn','timestamp':True},
+      'inbounds':[{'type':'tun','tag':'gpt-tun','interface_name':'alisa-gpt','address':['172.31.254.1/30','fdfe:4150::1/126'],
+                   'auto_route':False,'mtu':1400,'stack':'gvisor'},
+                  {'type':'socks','tag':'gpt-socks','listen':'127.0.0.1','listen_port':18081}],
+      'outbounds':items,'route':{'final':'gpt-vless','auto_detect_interface':True}}
 
 def xray_config(outbound):
     transport=outbound.get('transport',{});tls=outbound.get('tls',{})
