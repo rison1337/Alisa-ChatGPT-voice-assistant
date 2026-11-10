@@ -4,6 +4,7 @@ Uses a private immutable copy of embedded Python, with no app/vendor imports.
 """
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import tempfile
 
 HANDOFF = 'ALISA_WINDOWS_HANDOFF'
 SCHEDULED = 75
+SWITCHED = 76
 
 
 def run(arguments, directory, environment):
@@ -30,18 +32,33 @@ def main():
     os.chdir(base)
     folder = Path(tempfile.mkdtemp(prefix='.launcher-run-', dir=base))
     request = folder / 'handoff.json'
-    environment = {**os.environ, HANDOFF: str(request)}
+    environment = {**os.environ, HANDOFF: str(request),'ALISA_WINDOWS_DEVICE_HANDOFF':'1'}
     arguments = sys.argv[1:]
+    if arguments[:1]==['--native-device']:
+        if len(arguments)<2 or not re.fullmatch(r'default|[0-9a-f]{32}',arguments[1]):raise ValueError('Invalid profile')
+        environment['ALISA_NATIVE_DEVICE']=arguments[1];arguments=arguments[2:]
     update_error = 0
     try:
         while True:
             code = run([str(app / 'windows/runtime/python.exe'), '-B', '-X', 'utf8',
                         str(app / 'alisa.py'), *arguments], base, environment)
-            if code != SCHEDULED:
+            if code not in (SCHEDULED,SWITCHED):
                 return update_error or code
             if request.stat().st_size > 1024 * 1024:
                 raise ValueError('Oversized handoff')
             job = json.loads(request.read_text(encoding='utf-8'))
+            if code==SWITCHED:
+                selected=job.get('device');forwarded=job.get('arguments')
+                if (job.get('schema')!=1 or job.get('action')!='switch-device' or
+                        not isinstance(selected,str) or not re.fullmatch(r'default|[0-9a-f]{32}',selected) or
+                        not isinstance(forwarded,list) or not forwarded or forwarded[0] not in ('native','bridge') or
+                        any(not isinstance(value,str) or '\0' in value for value in forwarded)):
+                    raise ValueError('Invalid profile handoff')
+                request.unlink()
+                if forwarded[0]=='bridge':environment.pop('ALISA_NATIVE_DEVICE',None)
+                else:environment['ALISA_NATIVE_DEVICE']=selected
+                arguments=forwarded
+                continue
             executable, argv, directory = job['executable'], job['arguments'], job['directory']
             if (job.get('schema') != 1 or not isinstance(argv, list) or not argv
                     or any(not isinstance(value, str) or '\0' in value for value in argv)

@@ -485,6 +485,6 @@ def main(argv=None):
         # Recursive menu actions must unwind the terminal before replacing it.
         if argv is not None:raise
         try:devices.restart(request)
-        except OSError:ui.note('Не удалось переключить колонку. Повторите запуск программы.','red');return 1
+        except (OSError,RuntimeError) as error:ui.note(str(error) or 'Не удалось переключить колонку. Повторите запуск программы.','red');return 1
     except (ValueError,RuntimeError,OSError) as error:
         ui.note(str(error),'red');return 1

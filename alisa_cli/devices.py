@@ -69,6 +69,26 @@ def restart(request):
     else:environment['ALISA_NATIVE_DEVICE']=request.device
     # All modules capture HOME at import. Re-enter only after the dashboard exits.
     argv=[sys.executable,'-B','-X','utf8',str(state.ROOT/'alisa.py'),*request.arguments]
+    if sys.platform=='win32':
+        handoff=os.environ.get('ALISA_WINDOWS_HANDOFF')
+        if not handoff:raise RuntimeError('Для переключения колонок в Windows запустите установленный alisa.cmd.')
+        if os.environ.get('ALISA_WINDOWS_DEVICE_HANDOFF')=='1':
+            state.write_private(handoff,{'schema':1,'action':'switch-device','device':request.device,'arguments':request.arguments})
+            raise SystemExit(SWITCHED)
+        # An updater can relaunch the new app under the previous supervisor.
+        # Delegate once through its existing protocol to a fresh supervisor,
+        # outside app, before any future replacement of the application's DLLs.
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('alisa_windows_installer',state.ROOT/'windows/install.py')
+        installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
+        base=state.ROOT.parent
+        if state.ROOT.name!='app':raise RuntimeError('Для переключения установите готовый Windows-пакет.')
+        _,supervisor=installer.install_launcher(base)
+        executable=str(supervisor/'runtime/python.exe')
+        state.write_private(handoff,{'schema':1,'executable':executable,
+            'arguments':[executable,'-B','-X','utf8',str(supervisor/'launcher.py'),'--native-device',request.device,*request.arguments],
+            'directory':str(base),'relaunch':False})
+        raise SystemExit(75)
     os.execve(sys.executable,argv,environment)
 
 

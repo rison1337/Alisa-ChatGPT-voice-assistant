@@ -92,7 +92,7 @@ class NativeDevices(unittest.TestCase):
             with self.assertRaises(devices.Switch) as caught:devices.choose()
         self.assertEqual(caught.exception.arguments,['native'])
         stop.assert_not_called();start.assert_not_called()
-        with patch.object(devices.os,'execve') as execute:devices.restart(caught.exception)
+        with patch.object(devices.sys,'platform','linux'),patch.object(devices.os,'execve') as execute:devices.restart(caught.exception)
         env=execute.call_args.args[2]
         self.assertEqual(env['ALISA_NATIVE_DEVICE'],SECOND)
         self.assertEqual(execute.call_args.args[1][-1],'native')
@@ -192,6 +192,7 @@ print(json.dumps({'home':str(state.HOME),'account_home':str(accounts.HOME),'ssh_
             self.assertEqual(cli.main(['native','install','components']),1)
         update.assert_not_called()
 
+    @unittest.skipIf(sys.platform=='win32','Windows restart uses the supervisor; covered by test_launcher')
     def test_restart_uses_a_real_new_process_with_the_selected_profile(self):
         self.catalog(selected=SECOND)
         state.write_private(devices.home(SECOND)/'native/config.json',{**self.config,'host':'speaker-two'})
@@ -229,6 +230,7 @@ class ProfileWorker(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'другом окне'):worker.apply(job)
             apply.assert_not_called()
 
+    @unittest.skipUnless(sys.platform=='linux','Linux release.py fixture; Windows worker covered by test_launcher')
     def test_real_update_and_rollback_touch_only_the_job_profile(self):
         from test_updates import WorkerTransaction
         for failed in (False,True):
