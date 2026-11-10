@@ -325,13 +325,16 @@ panel_read() {
 panel_encode() {
     if [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] &&
        [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] && [ "$1" != ' 0 0 0 0 0 0 0 0 0' ]; then
-        # Two moving cyan/violet trails, with a dark blue background.
+        # Continuous red/amber lobes: no integer phase steps or hard tail edges.
         task_panel_encoded=$(awk -v t="$midi_anim_step" 'BEGIN {
-            t=t*0.1; for(p=0;p<24;p++) {
-                a=(t-p+2400)%24; b=(p+int(t/2)+12)%24;
-                u=(a<7?(7-a)*23:0); v=(b<5?(5-b)*27:0);
-                r=6+v; g=14+u; blue=30+int(u/2)+v;
-                if(blue>220)blue=220;
+            phase=t*24/60;
+            for(p=0;p<24;p++) {
+                a=phase-p; while(a<0)a+=24; while(a>=24)a-=24;
+                if(a>12)a=24-a; b=12-a;
+                q=1-a*a/144; u=q*q*q; u=u*u; u=u*u;
+                q=1-b*b/144; v=q*q*q; v=v*v; v=v*v;
+                r=3+250*u+225*v; g=1+115*u+9*v; blue=0;
+                if(r>253)r=253;
                 printf "\\0%03o\\0%03o\\0%03o",blue,g,r;
             }
         }')
@@ -430,28 +433,29 @@ logo_paint() {
     [ "$midi_mode" = 1 ] && [ "$logo_blocked" = 0 ] || return 0
     # Geometry and device name are checked before ever touching the logo.
     if [ -z "${ALISA_MIDI_LOGO_FB:-}" ]; then
-        [ "$(cat /sys/class/graphics/fb1/name 2>/dev/null)" = logo ] &&
-        [ "$(cat /sys/class/graphics/fb1/virtual_size 2>/dev/null)" = 6,1 ] &&
-        [ "$(cat /sys/class/graphics/fb1/bits_per_pixel 2>/dev/null)" = 24 ] || return 0
+        IFS= read -r logo_name < /sys/class/graphics/fb1/name &&
+        IFS= read -r logo_size < /sys/class/graphics/fb1/virtual_size &&
+        IFS= read -r logo_bpp < /sys/class/graphics/fb1/bits_per_pixel &&
+        [ "$logo_name:$logo_size:$logo_bpp" = logo:6,1:24 ] || return 0
     fi
     panel_unmuted && logo_read || return 0
     if [ "$logo_owned" = 1 ] && [ "$logo_current" != "$logo_painted" ]; then
         logo_owned=0;logo_blocked=1;return 0
     fi
     if [ "$logo_owned" = 0 ]; then logo_saved=$logo_current;logo_owned=1;fi
-    # Sample the six evenly spaced colors of the already-rendered ring.
-    logo_painted=$(od -An -v -tu1 -N72 "$PANEL_FB" | awk '{for(i=1;i<=NF;i++){if(n%12<3)printf "\\0%03o",$i;n++}} END {if(n!=72)exit 1}') || return 0
     if [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] &&
        [ "$task_led_requested" != ' 0 0 0 0 0 0 0 0 0' ]; then
         logo_painted=$(awk -v t="$midi_anim_step" 'BEGIN {
-            t=t*0.08; pulse=t%24; if(pulse>12)pulse=24-pulse;
-            level=35+pulse*9;
             for(p=0;p<6;p++) {
-                if(int(t/24)%2==0){r=8;g=level;b=int(level*0.8)}
-                else{r=int(level*0.8);g=12;b=level}
+                x=t/60+p/6; x=x-int(x); if(x>0.5)x=1-x; x=x*2;
+                pulse=x*x*(3-2*x);
+                r=12+230*pulse;g=1+45*pulse;b=0;
                 printf "\\0%03o\\0%03o\\0%03o",b,g,r;
             }
         }')
+    else
+        # Static colors and previews sample the ring; animation computes directly.
+        logo_painted=$(od -An -v -tu1 -N72 "$PANEL_FB" | awk '{for(i=1;i<=NF;i++){if(n%12<3)printf "\\0%03o",$i;n++}} END {if(n!=72)exit 1}') || return 0
     fi
     printf '%b' "$logo_painted" > "${ALISA_MIDI_LOGO_FB:-/dev/fb1}"
 }
@@ -511,7 +515,9 @@ if [ "$panel_mode" = 1 ]; then
         exec 4<&-
         trap '' PIPE
     fi
-    if [ "$midi_mode" = 1 ] && [ "${ALISA_MIDI_MATRIX:-0}" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ]; then
+    midi_clock_enabled=0; midi_clock_attempts=0; midi_clock_retry_at=0
+    midi_clock_start() {
+        midi_clock_attempts=$((midi_clock_attempts+1))
         clock_dir=$(mktemp -d /tmp/alisa-ring-clock-XXXXXX)
         mkfifo "$clock_dir/input"
         exec 3<>"$clock_dir/input"
@@ -520,25 +526,41 @@ if [ "$panel_mode" = 1 ]; then
         clock_pid=$!
         exec 4<&-
         trap '' PIPE
+    }
+    if [ "$midi_mode" = 1 ] && { [ "${ALISA_MIDI_MATRIX:-0}" = 1 ] || [ "${ALISA_MIDI_EYES:-0}" = 1 ]; } && [ "${ALISA_LED_PREVIEW:-0}" != 1 ]; then
+        midi_clock_enabled=1
+        midi_clock_start
     fi
     panel_encode ' 0 0 0 0 0 0 0 0 0'; panel_dark=$task_panel_encoded
     panel_requested=''; panel_painted=''
     midi_repeat=''; midi_misses=0
     midi_interval=2
-    if [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ]; then midi_interval=0.06; fi
+    if [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ]; then midi_interval=0.02; fi
     while :; do
         midi_intermediate=0
-        if IFS= read -r -t "$midi_interval" task_led_command; then
+        # Startup/after release still needs the full heartbeat grace period.
+        # A short animation tick must not exit before the first frame arrives.
+        midi_read_timeout=$midi_interval
+        [ -n "$midi_repeat" ] || midi_read_timeout=2
+        if IFS= read -r -t "$midi_read_timeout" task_led_command; then
             midi_misses=0
             case "$task_led_command" in F\ *|B) midi_repeat=$task_led_command;; *) midi_repeat='';; esac
         else
             [ "$midi_interval" != 2 ] && [ -n "$midi_repeat" ] || break
-            midi_misses=$((midi_misses+1)); [ "$midi_misses" -lt 24 ] || break
+            midi_misses=$((midi_misses+1)); [ "$midi_misses" -lt 75 ] || break
             task_led_command=$midi_repeat; midi_intermediate=1
+        fi
+        if [ "$midi_clock_enabled" = 1 ] && [ -z "$clock_pid" ] &&
+           [ "$midi_intermediate" = 0 ] && [ "$task_led_command" != 0 ] &&
+           [ "$midi_clock_attempts" -lt 3 ] && ring_now && [ "$ring_now" -ge "$midi_clock_retry_at" ]; then
+            midi_clock_start
         fi
         if [ -n "$clock_pid" ] && [ "$midi_intermediate" = 0 ]; then
             if ! kill -0 "$clock_pid" 2>/dev/null ||
-               ! printf '%s\n' "$task_led_command" >&3; then clock_stop; fi
+               ! printf '%s\n' "$task_led_command" >&3; then
+                clock_stop
+                if ring_now; then midi_clock_retry_at=$((ring_now+200)); fi
+            fi
         fi
         case "$task_led_command" in
             B) task_led_requested=$blue ;;
@@ -571,7 +593,7 @@ if [ "$panel_mode" = 1 ]; then
             panel_owned=1
             task_led_acquired=1
         fi
-        if ring_now; then midi_anim_step=$((ring_now % 1200)); fi
+        if ring_now; then midi_anim_step=$((ring_now % 900)); fi
         if [ "$panel_requested" != "$task_led_requested" ] ||
            { [ "$midi_mode" = 1 ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ]; }; then
             panel_encode "$task_led_requested"
