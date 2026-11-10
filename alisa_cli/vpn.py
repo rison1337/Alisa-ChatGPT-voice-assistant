@@ -3,11 +3,11 @@ from pathlib import Path
 from .state import HOME,ROOT,save,write_private
 from .ssh import Station
 from .runtime import TOOLS,NATIVE,status,stop,start,apply_settings
-from .vless import parse_link,fetch_subscription,core_config,auto_config
+from .vless import is_proxy_link,parse_proxy_link,fetch_subscription,core_config,auto_config
 from .autostart import station_flag
 
 def select_server(source,index=None,client='standard'):
-    if source.strip().startswith('vless://'):servers=[parse_link(source)];rejected=0
+    if is_proxy_link(source):servers=[parse_proxy_link(source)];rejected=0
     else:servers,rejected=fetch_subscription(source.strip(),client=client)
     auto=[item for item in servers if item.get('_engine')!='xray']
     if index is None and len(servers)>1:
@@ -72,7 +72,7 @@ def configure(config,source,index=None,client='standard',selection=None):
     if same:
         station.run('rm -f '+TOOLS+'/vless-candidate.json')
         write_private(path,value);write_private(HOME/'native/servers.json',servers)
-        if not source.strip().startswith('vless://'):write_private(HOME/'native/subscription.txt',source.strip().encode())
+        if not is_proxy_link(source):write_private(HOME/'native/subscription.txt',source.strip().encode())
         else:(HOME/'native/subscription.txt').unlink(missing_ok=True)
         config['vpn'].update(client=client,engine=engine);save(config)
         return {'configured':True,'servers_available':len(servers),'rejected':rejected,'engine':engine,
@@ -90,7 +90,7 @@ def configure(config,source,index=None,client='standard',selection=None):
         if was_running:station.run(NATIVE+'/run.sh start')
         write_private(path,value)
         write_private(HOME/'native/servers.json',servers)
-        if not source.strip().startswith('vless://'):write_private(HOME/'native/subscription.txt',source.strip().encode())
+        if not is_proxy_link(source):write_private(HOME/'native/subscription.txt',source.strip().encode())
         else:(HOME/'native/subscription.txt').unlink(missing_ok=True)
         config['vpn'].update(client=client,engine=engine);save(config)
     except BaseException:

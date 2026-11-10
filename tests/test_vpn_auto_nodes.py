@@ -1,5 +1,5 @@
 """Hysteria 2 and TUIC subscription links and the automatic server choice."""
-import unittest
+import base64,json,unittest
 from unittest.mock import patch
 from alisa_cli import vless,vpn
 
@@ -9,6 +9,39 @@ TUIC_LINK='tuic://00000000-0000-4000-8000-000000000002:secret-value@node3.exampl
 XHTTP_LINK='vless://00000000-0000-4000-8000-000000000003@node4.example.com:443?type=xhttp&security=reality&pbk=public-key-fixture&sid=abcd#Fourth'
 
 class SubscriptionSchemes(unittest.TestCase):
+ def test_hysteria_userpass_and_encoded_special_characters_survive(self):
+  for credential,expected in [('user:secret','user:secret'),('user%3Asecret%40value','user:secret@value'),('user:secret%3Aextra','user:secret:extra')]:
+   with self.subTest(credential=credential):
+    self.assertEqual(vless.parse_hy2('hy2://'+credential+'@node.example:443')['password'],expected)
+
+ def test_each_direct_scheme_avoids_subscription_fetch(self):
+  for link in (VLESS_LINK,HY2_LINK,TUIC_LINK):
+   with self.subTest(link=link),patch.object(vpn,'fetch_subscription') as fetch:
+    selection=vpn.select_server(link)
+    self.assertEqual(selection['selected']['server'],vless.parse_proxy_link(link)['server'])
+    fetch.assert_not_called()
+
+ def test_quic_servers_survive_json_yaml_and_base64_subscription_import(self):
+  hy=vless.parse_hy2(HY2_LINK);tu=vless.parse_tuic(TUIC_LINK)
+  for item in (hy,tu):item.pop('_name',None)
+  documents=[json.dumps({'outbounds':[hy,tu]}),
+    'proxies:\n - name: Second\n   type: hysteria2\n   server: node2.example.com\n   port: 8443\n   password: secret-value\n   sni: node2.example.com\n',
+    base64.b64encode((HY2_LINK+'\n'+TUIC_LINK).encode()).decode()]
+  for document,count in zip(documents,(2,1,2)):
+   with self.subTest(document=document):
+    nodes,rejected=vless.subscription(document);self.assertEqual(len(nodes),count);self.assertEqual(rejected,0)
+    self.assertTrue(all(n['tls']['enabled'] for n in nodes))
+
+ def test_json_quic_import_rejects_insecure_tls_and_detours(self):
+  for link in (HY2_LINK,TUIC_LINK):
+   for invalid in ('insecure','detour','tls-disabled'):
+    item=vless.parse_proxy_link(link)
+    if invalid=='insecure':item['tls']['insecure']=True
+    elif invalid=='tls-disabled':item['tls']['enabled']=False
+    else:item['detour']='other-proxy'
+    with self.subTest(link=link,invalid=invalid),self.assertRaises(ValueError):
+     vless.subscription(json.dumps({'outbounds':[item]}))
+
  def test_hysteria2_link_becomes_a_sing_box_outbound(self):
   item=vless.parse_hy2(HY2_LINK)
   self.assertEqual(item['type'],'hysteria2');self.assertEqual(item['server'],'node2.example.com')

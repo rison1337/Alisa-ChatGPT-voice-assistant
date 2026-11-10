@@ -58,8 +58,8 @@ def auto_settings(config):
 
 def vpn_configure(config,source):
     client='standard'
-    if not source.strip().startswith('vless://'):
-        client=pick('Формат подписки', [('Обычная VLESS / Base64 / JSON / YAML','standard'),('Incy (Xray JSON)','incy'),('Happ','happ')])
+    if not vpn.is_proxy_link(source):
+        client=pick('Формат подписки', [('Обычная / Base64 / JSON / YAML','standard'),('Incy (Xray JSON)','incy'),('Happ','happ')])
     selection=vpn.select_server(source,client=client)
     enabled=yes('Запускать VLESS при включении колонки?',config['vpn'].get('autostart',False))
     with ui.activity('Устанавливаю и проверяю VLESS'):
@@ -214,8 +214,8 @@ def installation_options(config,network_result):
         choice=ui.select('Как подключать GPT?',choices,default='keep' if saved else 'configure' if recommended else 'off')
         use_vpn=choice!='off'
         if choice=='configure':
-            source=ui.secret('Ссылка vless:// или HTTPS-подписка')
-            client='standard' if source.strip().startswith('vless://') else pick('Формат подписки',[('Обычная подписка','standard'),('Incy','incy'),('Happ','happ')])
+            source=ui.secret('Ссылка VLESS / Hysteria 2 / TUIC или HTTPS-подписка')
+            client='standard' if vpn.is_proxy_link(source) else pick('Формат подписки',[('Обычная подписка','standard'),('Incy','incy'),('Happ','happ')])
             selection=vpn.select_server(source,client=client)
         elif choice=='keep':ui.note('Сохранённый сервер и его параметры будут использованы повторно.')
     ui.note('Автозапуск','bold')
@@ -444,7 +444,7 @@ def _main(argv=None):
         elif action=='vpn':
             if mode!='native':raise ValueError('VLESS настраивается в нативном режиме')
             operation=args.operation or pick('VLESS', [('Настроить ссылку / подписку','configure'),('Запустить','start'),('Остановить','stop'),('Состояние','status'),('Автозапуск','autostart'),('Отключить использование VPN','disable')])
-            if operation=='configure':show(vpn_configure(config,ui.secret('VLESS или подписка')))
+            if operation=='configure':show(vpn_configure(config,ui.secret('Ссылка VPN или HTTPS-подписка')))
             elif operation=='remove':
                 from .storage import size_text
                 value=vpn.removal_plan(config)
