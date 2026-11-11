@@ -96,7 +96,7 @@ def open_window(profile,proxy=None):
     identity=browser_user_agent(executable)
     if identity:args.append('--user-agent='+identity)
     if proxy:args.append('--proxy-server='+proxy)
-    process=subprocess.Popen(args+['https://chatgpt.com/'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    process=subprocess.Popen(args+['https://chatgpt.com/auth/login'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     _processes[key]=process;time.sleep(.3)
     if process.poll() is not None:raise RuntimeError('Окно входа не открылось. Проверьте, не занят ли отдельный профиль браузера.')
     return process.pid

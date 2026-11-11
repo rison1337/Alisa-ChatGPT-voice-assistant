@@ -3,17 +3,24 @@ from pathlib import Path
 from .state import HOME,ROOT,save,write_private
 from .ssh import Station
 from .runtime import TOOLS,NATIVE,status,stop,start,apply_settings
-from .vless import parse_link,fetch_subscription,core_config
+from .vless import is_proxy_link,parse_proxy_link,fetch_subscription,core_config,auto_config
 from .autostart import station_flag
 
 def select_server(source,index=None,client='standard'):
-    if source.strip().startswith('vless://'):servers=[parse_link(source)];rejected=0
+    if is_proxy_link(source):servers=[parse_proxy_link(source)];rejected=0
     else:servers,rejected=fetch_subscription(source.strip(),client=client)
+    auto=[item for item in servers if item.get('_engine')!='xray']
     if index is None and len(servers)>1:
         from .ui import select
-        index=select('Сервер VLESS',[(f'{item.get("_name") or item["server"]} ({item["server_port"]})',i) for i,item in enumerate(servers)])
+        choices=[]
+        if len(auto)>1:choices.append(('Авто: самый быстрый рабочий сервер','auto'))
+        choices+=[(f'{item.get("_name") or item["server"]} ({item["server_port"]})',i) for i,item in enumerate(servers)]
+        index=select('Сервер',choices)
+    if index=='auto':
+        if len(auto)<2:raise ValueError('Для автоматического выбора нужно минимум два независимых сервера')
+        return {'servers':servers,'rejected':rejected,'selected':auto[0],'auto':auto,'client':client}
     index=0 if index is None else index
-    if not 0<=index<len(servers):raise ValueError('Номер сервера вне списка')
+    if not isinstance(index,int) or not 0<=index<len(servers):raise ValueError('Номер сервера вне списка')
     selected=servers[index]
     return {'servers':servers,'rejected':rejected,'selected':selected,'client':client}
 
@@ -21,8 +28,9 @@ def configure(config,source,index=None,client='standard',selection=None):
     if config['mode']!='native':raise ValueError('VLESS в первом этапе поддерживается в нативном режиме')
     selection=select_server(source,index,client) if selection is None else selection
     servers=selection['servers'];rejected=selection['rejected'];selected=selection['selected'];client=selection['client']
-    engine=selected.get('_engine','sing-box')
-    value=core_config(selected)
+    auto=selection.get('auto')
+    engine='sing-box' if auto else selected.get('_engine','sing-box')
+    value=auto_config(auto) if auto else core_config(selected)
     # Validate with the exact bundled core before touching the device.
     path=HOME/'native/vless.json'
     if engine=='xray':
@@ -64,7 +72,7 @@ def configure(config,source,index=None,client='standard',selection=None):
     if same:
         station.run('rm -f '+TOOLS+'/vless-candidate.json')
         write_private(path,value);write_private(HOME/'native/servers.json',servers)
-        if not source.strip().startswith('vless://'):write_private(HOME/'native/subscription.txt',source.strip().encode())
+        if not is_proxy_link(source):write_private(HOME/'native/subscription.txt',source.strip().encode())
         else:(HOME/'native/subscription.txt').unlink(missing_ok=True)
         config['vpn'].update(client=client,engine=engine);save(config)
         return {'configured':True,'servers_available':len(servers),'rejected':rejected,'engine':engine,
@@ -82,7 +90,7 @@ def configure(config,source,index=None,client='standard',selection=None):
         if was_running:station.run(NATIVE+'/run.sh start')
         write_private(path,value)
         write_private(HOME/'native/servers.json',servers)
-        if not source.strip().startswith('vless://'):write_private(HOME/'native/subscription.txt',source.strip().encode())
+        if not is_proxy_link(source):write_private(HOME/'native/subscription.txt',source.strip().encode())
         else:(HOME/'native/subscription.txt').unlink(missing_ok=True)
         config['vpn'].update(client=client,engine=engine);save(config)
     except BaseException:

@@ -4,6 +4,7 @@ from .state import HOME,ROOT,write_private
 from .ssh import Station
 from .runtime import NATIVE,TOOLS,stop,status,bridge_env
 from .login_browser import close_profile,open_window,SignInWatcher
+from .dependencies import require_login_tools
 from . import ui
 
 def archive_settings(station):
@@ -35,6 +36,7 @@ def install_session(config,candidate,destination):
         start(config)
 
 def login(config,change=False):
+    require_login_tools()
     native=config['mode']=='native';folder=HOME/config['mode']
     profile=folder/'browser-profile' if native else HOME/'bridge/runtime/browser-profile'
     destination=folder/'session.json';folder.mkdir(parents=True,exist_ok=True,mode=0o700)

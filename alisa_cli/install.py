@@ -16,7 +16,8 @@ def native_paths():
 
 def native_files(station,model=None):
     folder=ROOT/'assets/native';manifest=json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
-    if model=='mini1' and 'volume-libs/libasound.so.2' not in manifest['files']:
+    if model=='mini1' and ('mini1' not in manifest.get('model','').split('+') or
+                          not {'bin/alisa-standalone','volume-libs/libasound.so.2'} <= manifest['files'].keys()):
         raise RuntimeError('Для Мини 1 нужен заново собранный пакет ARMhf/glibc 2.23 с адаптером громкости; штатные готовые assets не изменены этим source-only патчем.')
     files={}
     for name,digest in manifest['files'].items():
@@ -118,6 +119,9 @@ def install(config,activate=True,dry_run=False):
                 else:s.put(remote,data,0o700 if remote.endswith(('.sh','.so')) or '/bin/' in remote else 0o600)
             if was_running and changed:s.run(NATIVE+'/run.sh start',check=False)
             raise
+    if config['mode']=='native':
+        from .devices import bundle
+        config['native_bundle']=bundle()
     config['installed']=True;save(config)
     result={'mode':config['mode'],'installed':True,'started':bool(was_running and config['mode']=='native' and not changed)}
     if config['mode']=='native':

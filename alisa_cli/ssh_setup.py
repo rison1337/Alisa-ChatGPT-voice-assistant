@@ -2,7 +2,8 @@
 import contextlib,hashlib,ipaddress,os,shlex,socket,subprocess,sys,tempfile,threading
 from pathlib import Path
 from .state import HOME,save,write_private,validate
-from .ssh import Station
+from .ssh import Station,check_result
+from .errors import PublicError
 
 def missing_tools():
     if sys.platform=='win32':
@@ -118,10 +119,12 @@ def install_key(config,password=None):
         args=args[:-1]+['-o','PreferredAuthentications=password','-o','PubkeyAuthentication=no','-o','NumberOfPasswordPrompts=1',
                        '-o','ControlMaster=no','-o','ControlPath=none',args[-1]]
         with password_channel(password) as env:
-            result=subprocess.run(args+[command],env=env,capture_output=True,timeout=60)
-        if result.returncode==9:raise RuntimeError('SSH работает, но у пользователя нет прав root')
-        if result.returncode:raise RuntimeError('Вход по SSH не удался. Проверьте пароль; сервер должен разрешать вход по паролю.')
-    else:station.run(command)
+            try:result=subprocess.run(args+[command],env=env,capture_output=True,timeout=60)
+            except subprocess.TimeoutExpired:raise PublicError('ssh_timeout') from None
+    else:result=station.run(command,check=False)
+    if result.returncode==9:raise RuntimeError('SSH работает, но у пользователя нет прав root')
+    if result.returncode==255:check_result(result)
+    if result.returncode:raise PublicError('ssh_key_install')
     checked={**config,'identity':str(key)}
     if Station(checked).text('id -u').strip()!='0':raise RuntimeError('Вход новым SSH-ключом не подтверждён. Настройки не сохранены.')
     config.update(checked);save(config)
@@ -131,13 +134,18 @@ def form(config,ui,allow_saved=False):
     """No discovery: all connection details come from the owner."""
     missing=missing_tools()
     if missing:raise RuntimeError('Не хватает компонентов SSH: '+', '.join(missing))
-    if allow_saved and config.get('ssh_explicit') and config.get('identity') and Path(config['identity']).is_file():
+    saved_key=config.get('identity') and Path(config['identity']).is_file()
+    saved_password=sys.platform=='win32' and config.get('ssh_auth') in ('password','empty-password')
+    if allow_saved and config.get('ssh_explicit') and (saved_key or saved_password):
         endpoint=f'{config.get("user") or "root"}@{config["host"]}:{config.get("port") or 2222}'
         action=ui.select('Подключение к колонке',[(f'Использовать сохранённое: {endpoint}','reuse'),('Изменить IP, порт или пароль','edit')],default='reuse')
         if action=='reuse':
+            if sys.platform=='win32':
+                from .winssh import prepare
+                prepare(config)
             if Station(config).text('id -u').strip()!='0':raise RuntimeError('Сохранённое подключение не даёт права root. Измените данные подключения.')
             ui.note('✓ Сохранённое SSH-подключение работает.','green')
-            return {'ssh':True,'root':True,'key_saved':True}
+            return {'ssh':True,'root':True,'key_saved':bool(saved_key)}
     address,port=remembered_address(config)
     candidate=dict(config)
     candidate['host']=ui.text('IP-адрес колонки',address,validate=ip_valid)
@@ -147,6 +155,7 @@ def form(config,ui,allow_saved=False):
     # A new endpoint must not silently inherit another column's key or pin file.
     if candidate['host']!=address or candidate['port']!=port:
         candidate['identity']=None
+        candidate.pop('ssh_auth',None)
         candidate.pop('model',None)
         candidate['installed']=False
         candidate['autostart']=False
@@ -155,6 +164,25 @@ def form(config,ui,allow_saved=False):
         ui.note(f'Новый SSH-сервер: {ip}:{port}','cyan');ui.note(fingerprints.strip(),'muted')
         return ui.confirm('Подтвердить этот отпечаток SSH?',False)
     trust_host(candidate,confirm)
+    if sys.platform=='win32':
+        from .winssh import use_password
+        method=ui.select('Способ входа SSH',[
+            ('Пароль, в том числе пустой — без изменения SSH на колонке','password'),
+            ('Существующий приватный ключ','key')],
+            default='key' if candidate.get('identity') and not saved_password else 'password')
+        if method=='password':
+            password=ui.secret('Пароль SSH колонки (Enter — пустой пароль)',optional=True)
+            try:result=use_password(candidate,password)
+            finally:password=None
+        else:
+            candidate['identity']=ui.text('Путь к приватному SSH-ключу',candidate.get('identity') or '',
+                validate=lambda value:True if Path(value).is_file() else 'Файл ключа не найден')
+            candidate.pop('ssh_auth',None)
+            if Station(candidate).text('id -u').strip()!='0':raise RuntimeError('SSH работает, но у пользователя нет прав root.')
+            save(candidate);result={'ssh':True,'root':True,'key_saved':True}
+        config.clear();config.update(candidate)
+        ui.note('✓ SSH и root проверены. Настройки подключения сохранены на ПК.','green')
+        return result
     password=ui.secret('Пароль SSH колонки (Enter — сохранённый ключ)' if sys.platform=='win32' else 'Пароль SSH колонки (Enter — использовать существующий ключ)',optional=True)
     try:result=install_key(candidate,password or None)
     finally:password=None

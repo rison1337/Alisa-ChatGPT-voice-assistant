@@ -1,6 +1,7 @@
 import json,shutil,subprocess,sys
 from .ssh import Station
-from .firmware import MAIND,VQE,BUILDS,ARCHITECTURES,WARNING,classify
+from .firmware import MAIND,VQE,BUILDS,ARCHITECTURES,WARNING,inspect_identity
+from .dependencies import login_missing
 
 def windows_chromium():
     if sys.platform!='win32':return None
@@ -9,26 +10,24 @@ def windows_chromium():
 
 def inspect(config):
     s=Station(config)
-    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay socat base64 sha256sum ip; do command -v "$x" || true; done; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
-    lines=s.text(script).replace('\x00',' ').splitlines()
+    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay base64 sha256sum ip; do command -v "$x" || true; done; command -v socat || command -v /data/opt/entware/bin/socat || true; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
+    lines=s.text(script).splitlines()
     if len(lines)<3:raise RuntimeError('Колонка вернула неполный ответ SSH. Повторите проверку подключения.')
     root=lines[0].strip()=='0'
     device_tree=lines[2]
     hashes={line.split()[-1]:line.split()[0] for line in lines if len(line.split())==2 and len(line.split()[0])==64}
     pair=(hashes.get('/system/vendor/quasar/maind'),hashes.get('/system/vendor/quasar/libs/libyandex_evil.so'))
-    device_type_line=s.text("grep -m1 deviceType /system/vendor/quasar/quasar.cfg")
-    device_type_parts=device_type_line.split('"')
-    device_type=device_type_parts[3] if len(device_type_parts)>3 else None
-    firmware=classify(device_tree,pair,device_type)
+    firmware=inspect_identity(device_tree,pair,s.text)
     model=firmware['model'];compatible=model is not None
-    mode_supported=compatible and (config['mode']=='native' or model=='lite2')
+    mode_supported=compatible and (config['mode']=='native' or model in ('lite2','mini2'))
     missing=[tool for tool in ['ssh','chromium'] if not shutil.which(tool)]
+    missing+=login_missing()
     if sys.platform=='win32':
         from .windows import missing as windows_missing
         missing=windows_missing()
     if config['mode']=='bridge':
-        for tool in ['pactl','pacat','paplay','Xvfb','xauth']:
-            if not shutil.which(tool) and not (tool=='Xvfb' and (__import__('pathlib').Path(__file__).resolve().parents[1]/'engines/bridge/display-tools/usr/bin/Xvfb').exists()):missing.append(tool)
+        for tool in ['pactl','pacat','paplay']:
+            if not shutil.which(tool):missing.append(tool)
         if sys.platform!='linux':missing.append('Windows audio backend (следующий этап)')
         if not missing:
             if subprocess.run(['pactl','info'],capture_output=True).returncode:missing.append('работающий PipeWire/PulseAudio')
@@ -51,13 +50,18 @@ def require(config,report=None,warn=True):
     reasons=[]
     if not report['root']:reasons.append('нужны права root по SSH')
     if not report['plum']:reasons.append('устройство не распознано как поддерживаемая Станция')
-    if report.get('mode_supported') is False:reasons.append('эта модель пока поддерживается только в нативном режиме; мост доступен для Лайт 2')
+    if report['plum'] and report.get('mode_supported') is False:reasons.append('эта модель пока поддерживается только в нативном режиме; мост доступен для Лайт 2 и Мини 2')
     if not report.get('firmware_files_present',report['firmware_abi_supported']):reasons.append('не удалось прочитать maind и библиотеку VQE')
     if report.get('architecture', 'aarch64') not in ARCHITECTURES:reasons.append('архитектура колонки не поддерживается')
     if report['free_data_kib'] is None or report['free_data_kib']<=12000:reasons.append('на колонке нужно больше 12 МиБ свободного места')
     if report['host_missing']:reasons.append('на компьютере не хватает: '+', '.join(report['host_missing']))
     if report['station_missing']:reasons.append('на колонке не хватает: '+', '.join(report['station_missing']))
     if not report['ok'] and not reasons:reasons.append('не пройдена обязательная проверка компонентов')
+    if len(reasons)==1 and report['host_missing'] and set(report['host_missing'])<= {'Xvfb','xauth'}:
+        # Keep the new dependency diagnosis visible through the updater's
+        # fixed public-error channel, before it stops or replaces anything.
+        from .errors import PublicError
+        raise PublicError('login_display_missing')
     if reasons:raise RuntimeError('Установка остановлена: '+('; '.join(reasons))+'.')
     if warn and not report['firmware_abi_supported']:
         from . import ui

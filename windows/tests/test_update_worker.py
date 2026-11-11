@@ -19,7 +19,7 @@ class WindowsWorkerTransaction(unittest.TestCase):
     def package(self,root,version):
         root.mkdir(parents=True)
         shutil.copytree(ROOT/'windows/runtime',root/'windows/runtime')
-        for name in ('alisa_cli/app_install.py','alisa_cli/errors.py','alisa_cli/windows.py','windows/install.py','windows/launcher.py','scripts/update_worker.py'):
+        for name in ('alisa_cli/app_install.py','alisa_cli/errors.py','alisa_cli/windows.py','windows/install.py','windows/launcher.py','windows/credential_broker.py','scripts/update_worker.py'):
             target=root/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/name,target)
         (root/'alisa_cli/__init__.py').write_text('__version__='+repr(version)+'\n',encoding='utf-8')
         script='''import json,os,sys

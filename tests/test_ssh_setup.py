@@ -1,11 +1,35 @@
-import json,os,subprocess,tempfile,unittest
+import contextlib,hashlib,json,os,subprocess,tempfile,unittest
 import copy
 from pathlib import Path
 from unittest.mock import patch
 from alisa_cli import state,ssh_setup,ui
 from alisa_cli.ssh import Station
+from alisa_cli.errors import PublicError
 
 class Setup(unittest.TestCase):
+ def check_install_failure(self,result,expected_code,use_password=True):
+  with tempfile.TemporaryDirectory() as folder:
+   home=Path(folder);(home/'ssh').mkdir()
+   config=state.defaults('native');config['host']='192.0.2.10';before=copy.deepcopy(config)
+   suffix=hashlib.sha256(b'root@192.0.2.10:2222').hexdigest()[:16]
+   key=home/'ssh'/('id_ed25519_'+suffix);key.touch();key.with_suffix('.pub').write_text('ssh-ed25519 AAAAtest')
+   secret='test-only-password-never-publish'
+   kwargs={'side_effect':result} if isinstance(result,Exception) else {'return_value':result}
+   with patch.object(ssh_setup,'HOME',home),patch.object(ssh_setup,'password_channel',return_value=contextlib.nullcontext({})), \
+        patch.object(ssh_setup.subprocess,'run',**kwargs) as run,patch.object(ssh_setup,'save') as save:
+    with self.assertRaises(PublicError) as caught:ssh_setup.install_key(config,secret if use_password else None)
+    self.assertEqual(caught.exception.code,expected_code)
+    self.assertNotIn(secret,str(caught.exception));self.assertNotIn('private-remote-detail',str(caught.exception))
+    self.assertNotIn(secret,str(run.call_args));save.assert_not_called()
+   self.assertEqual(config,before)
+ def test_remote_key_write_error_is_not_reported_as_wrong_password(self):
+  self.check_install_failure(subprocess.CompletedProcess([],1,stdout=b'',stderr=b'Read-only file system private-remote-detail'),'ssh_key_install')
+ def test_existing_key_login_reports_remote_write_failure_separately(self):
+  self.check_install_failure(subprocess.CompletedProcess([],1,stdout=b'',stderr=b'Read-only file system private-remote-detail'),'ssh_key_install',False)
+ def test_password_rejection_keeps_authentication_diagnostic(self):
+  self.check_install_failure(subprocess.CompletedProcess([],255,stdout=b'',stderr=b'Permission denied private-remote-detail'),'ssh_auth')
+ def test_key_install_timeout_has_a_safe_network_diagnostic(self):
+  self.check_install_failure(subprocess.TimeoutExpired(['ssh'],60),'ssh_timeout')
  def test_reusing_saved_connection_does_not_ask_password_again(self):
   with tempfile.TemporaryDirectory() as folder:
    identity=Path(folder)/'key';identity.write_text('test-key')

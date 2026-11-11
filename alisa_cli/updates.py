@@ -211,12 +211,18 @@ def installed_root(target):
 def mode_plan():
     from . import runtime
     plans = []
-    for mode in ('native', 'bridge'):
+    modes=('native',) if os.environ.get('ALISA_NATIVE_DEVICE') is not None else ('native','bridge')
+    for mode in modes:
         if mode == 'bridge' and sys.platform == 'win32':
             continue
         config = load(mode)
         if not config.get('installed'):
             continue
+        if sys.platform == 'win32' and config.get('ssh_auth') == 'password':
+            from .winssh import prepare,share_password
+            prepare(config)
+            if not share_password(config):
+                raise RuntimeError('Для обновления с паролем SSH закройте окно и запустите установленный alisa.cmd. Пароль будет запрошен заново; файлы не изменены.')
         state = runtime.status(config)
         if state.get('voice_active') or state.get('phase') in ('active', 'connecting', 'opening', 'starting', 'stopping'):
             raise RuntimeError('Сначала закройте голосовой чат и дождитесь готовности Алисы. Обновление не началось.')

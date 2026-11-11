@@ -17,7 +17,7 @@ int main(int argc,char **argv){
 #else
                 {"audio_engine","Sonic PI"},{"audio_pipeline_revision",4},
 #endif
-                {"live_settings_revision",1},{"pointer_bits",sizeof(void *)*8},
+                {"live_settings_revision",1},{"ice_stun_toggle_revision",1},{"voice_diagnostics_revision",1},{"pointer_bits",sizeof(void *)*8},
                 {"rss_kib",rss_kib()},{"opus",opus_get_version_string()},
                 {"curl",curl_version_info(CURLVERSION_NOW)->version}}.dump()<<"\n";return 0;
         }
@@ -30,7 +30,7 @@ int main(int argc,char **argv){
                 curl_easy_setopt(handle,CURLOPT_URL,url);curl_easy_setopt(handle,CURLOPT_TIMEOUT,8L);
                 curl_easy_setopt(handle,CURLOPT_CONNECTTIMEOUT,5L);curl_easy_setopt(handle,CURLOPT_NOSIGNAL,1L);
                 curl_easy_setopt(handle,CURLOPT_USERAGENT,"Mozilla/5.0 AlisaVoiceNetworkCheck");
-                curl_easy_setopt(handle,CURLOPT_CAINFO,"/system/vendor/quasar/certs/ca-certificates.crt");
+                configure_ca(handle);
                 curl_easy_setopt(handle,CURLOPT_WRITEFUNCTION,http_body);curl_easy_setopt(handle,CURLOPT_WRITEDATA,&body);
                 if(const char *proxy=getenv("ALISA_PROXY_URL"))curl_easy_setopt(handle,CURLOPT_PROXY,proxy);
                 auto code=curl_easy_perform(handle);long status=0;curl_easy_getinfo(handle,CURLINFO_RESPONSE_CODE,&status);
@@ -83,7 +83,11 @@ int main(int argc,char **argv){
 #endif
         }
         auto call=std::make_shared<VoiceCall>(options);
-        json result=call->run(auth);
+        json result;
+        try{result=call->run(auth);}
+        catch(const std::exception &exc){call->stop();result=call->stats();
+            result["success"]=false;result["error"]=safe_error(exc);}
+        call.reset();
         if(result.contains("identity")){write_json(state/"probe-conversation.json",result["identity"]);result.erase("identity");}
         if(result.contains("synthetic_caption")){
             write_json(state/"probe-synthetic-caption.json",result["synthetic_caption"]);result.erase("synthetic_caption");

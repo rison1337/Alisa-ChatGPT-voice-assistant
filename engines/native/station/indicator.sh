@@ -1,14 +1,32 @@
 #!/bin/sh
 # Temporary ChatGPT LED ownership; no firmware files are edited.
 set -efu
+# An explicit opt-out acknowledges frames without acquiring LEDs.
+if [ "${ALISA_DISABLE_LED:-0}" = 1 ]; then
+    trap 'exit 0' TERM INT HUP
+    while IFS= read -r task_led_command; do
+        case "$task_led_command" in
+            F\ *) printf 'FRAME\n' ;;
+            B) printf 'BLUE\n' ;;
+            0) printf 'STOCK\n' ;;
+        esac
+    done
+    exit 0
+fi
 LED=${ALICE_LED_ROOT:-/sys/class/leds/plum}
 # Lite 1 (yandex,station-micro) has the same 3x3 ring under another name
 # and only a software microphone mute, so there is no switch to report.
+# Mini 2 (yandex,station-mini2) has a 6-zone ring; its momentary mute button
+# is handled by maind before VQE; its latched state is read separately below.
 no_mute_switch=0
-if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ] && [ -e /sys/class/leds/micro:red:ring1 ]; then
-    LED=/sys/class/leds/micro
+mini2_mute=0
+if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ]; then
+    if [ -e /sys/class/leds/micro:red:ring1 ]; then
+        LED=/sys/class/leds/micro
+    elif [ -e /sys/class/leds/mini2:red:ring1 ]; then
+        LED=/sys/class/leds/mini2
+    fi
 fi
-case "$LED" in */micro) no_mute_switch=1 ;; esac
 # Mini 1 has no supported GPT LED backend; acknowledge without hardware writes.
 if [ "${ALISA_MINI1:-0}" = 1 ]; then
     while IFS= read -r task_led_command; do
@@ -16,14 +34,46 @@ if [ "${ALISA_MINI1:-0}" = 1 ]; then
     done
     exit 0
 fi
+# Frames carry 3 logical zones; zone_map gives the logical zone of each
+# physical one. Mini 2 doubles every logical zone onto a physical pair; its
+# clock LEDs (mini2:white:clock*) are never touched.
+zones='1 2 3'
+zone_map='1 2 3'
+case "$LED" in
+    */micro) no_mute_switch=1 ;;
+    */mini2) mini2_mute=1; zones='1 2 3 4 5 6'; zone_map='1 1 2 2 3 3' ;;
+esac
+dark_frame=''
+for task_led_zone in $zones; do dark_frame="$dark_frame 0 0 0"; done
 # Station 2 (yandexmidi) drives its 88-LED panel through a framebuffer
 # (/dev/fb0, 89x1 RGBW) instead of plum sysfs rings; render there instead.
 panel_mode=0
+mini3_mode=0
+midi_mode=0
+midi_anim_step=0
 if [ -z "${ALICE_LED_ROOT:-}" ]; then
-    if [ -n "${ALICE_PANEL_FB:-}" ]; then
-        # Explicit framebuffer paths are also used by isolated device tests.
+    # Explicit fixture paths must take precedence over physical device detection.
+    if [ -n "${ALICE_MINI3_FB:-}" ]; then
+        mini3_mode=1
         panel_mode=1
-    elif [ ! -e "$LED:red:ring1" ] && [ ! -e /sys/class/leds/micro:red:ring1 ]; then
+    elif [ -n "${ALICE_PANEL_FB:-}" ]; then
+        panel_mode=1
+    elif [ -n "${ALICE_MIDI_FB:-}" ]; then
+        mini3_mode=1; midi_mode=1; panel_mode=1
+    elif tr '\000' '\n' < /proc/device-tree/compatible 2>/dev/null | grep -qx 'yandex,cucumber'; then
+        [ -c /dev/fb0 ] &&
+        [ "$(cat /sys/class/graphics/fb0/name)" = ring ] &&
+        [ "$(cat /sys/class/graphics/fb0/virtual_size)" = 24,1 ] &&
+        [ "$(cat /sys/class/graphics/fb0/bits_per_pixel)" = 24 ] || exit 0
+        mini3_mode=1; midi_mode=1; panel_mode=1
+    elif tr '\000' '\n' < /proc/device-tree/compatible 2>/dev/null | grep -Eq '^yandex,bergamot(-evt1)?$'; then
+        # Mini 3 has six BGR pixels; it does not use Mini 2's sysfs LEDs.
+        [ -c /dev/fb0 ] &&
+        [ "$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)" = 6,1 ] &&
+        [ "$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null)" = 24 ] || exit 0
+        mini3_mode=1
+        panel_mode=1
+    elif [ ! -e "$LED:red:ring1" ] && [ ! -e /sys/class/leds/micro:red:ring1 ] && [ ! -e /sys/class/leds/mini2:red:ring1 ]; then
         # Do not send RGBW bytes to another model's framebuffer (Lite 2 is 3x1).
         [ -c /dev/fb0 ] &&
         [ "$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)" = 89,1 ] &&
@@ -38,11 +88,35 @@ saved_triggers=''
 painted=''
 blue=' 0 0 160 0 0 160 0 0 160'
 # The client sends dark frames whenever GPT is silent, i.e. while the owner
-# speaks and while GPT thinks. A soft cyan wave is an explicit preference;
-# the small flag is re-read so the CLI can change it without restarting audio.
+# speaks and while GPT thinks. Both the legacy cyan wave and the selected
+# effect during pauses are opt-in; preferences reload without restarting audio.
 listen=${ALISA_LISTEN_LED:-0}
 listen_file=${ALISA_LISTEN_LED_FILE-/data/opt/alisa-standalone/listen-led}
+scope_file=${ALISA_LED_SCOPE_FILE-/data/opt/alisa-standalone/led-scope}
+midi_fire_enabled() {
+    [ "$midi_mode" = 1 ] && [ "${ALISA_LED_STYLE:-rainbow}" = rainbow ] || return 1
+    task_midi_fire=${ALISA_MIDI_FIRE:-0}
+    task_midi_fire_file=${ALISA_MIDI_FIRE_FILE-/data/opt/alisa-standalone/midi-fire}
+    if [ -n "$task_midi_fire_file" ] && [ -r "$task_midi_fire_file" ]; then
+        IFS= read -r task_midi_fire < "$task_midi_fire_file" || return 1
+    fi
+    [ "$task_midi_fire" = 1 ]
+}
 listening_enabled() {
+    task_led_style=''
+    if [ -n "$scope_file" ] && [ -r "$scope_file" ]; then
+        IFS=' ' read -r task_led_scope task_led_style task_led_extra < "$scope_file" || return 1
+        [ -z "$task_led_extra" ] || return 1
+        case "$task_led_scope" in
+            active)
+                case "$task_led_style" in
+                    rainbow|red|green|blue|purple|white|pulse-red|pulse-green|pulse-blue|pulse-purple|pulse-white) return 0 ;;
+                    *) return 1 ;;
+                esac ;;
+            speaking) task_led_style='' ;;
+            *) return 1 ;;
+        esac
+    fi
     task_led_listen=$listen
     if [ -n "$listen_file" ] && [ -r "$listen_file" ]; then
         IFS= read -r task_led_listen < "$listen_file" || return 1
@@ -53,13 +127,55 @@ listening_enabled() {
 }
 tick=0
 listening_frame() {
-    tick=$(( (tick + 1) % 16 ))
+    tick=$(( (tick + 1) % 48 ))
     task_led_decoded=''
+    if [ -n "$task_led_style" ]; then
+        selected_listening_frame
+        return
+    fi
     for task_led_zone in 0 5 10; do
         task_led_step=$(( (tick + task_led_zone) % 16 ))
         [ "$task_led_step" -le 8 ] || task_led_step=$(( 16 - task_led_step ))
         task_led_level=$(( 20 + task_led_step * 13 ))
         task_led_decoded="$task_led_decoded 0 $(( task_led_level / 2 )) $task_led_level"
+    done
+}
+# Integer-only animation at the client's 8 fps; no helper process per frame.
+selected_listening_frame() {
+    if [ "$task_led_style" = rainbow ]; then
+        for task_led_zone in 0 16 32; do
+            task_led_hue=$(( (tick + task_led_zone) % 48 ))
+            task_led_up=$(( (task_led_hue % 8) * 20 ))
+            task_led_down=$(( 160 - task_led_up ))
+            case $(( task_led_hue / 8 )) in
+                0) task_led_rgb="160 $task_led_up 0" ;;
+                1) task_led_rgb="$task_led_down 160 0" ;;
+                2) task_led_rgb="0 160 $task_led_up" ;;
+                3) task_led_rgb="0 $task_led_down 160" ;;
+                4) task_led_rgb="$task_led_up 0 160" ;;
+                5) task_led_rgb="160 0 $task_led_down" ;;
+            esac
+            task_led_decoded="$task_led_decoded $task_led_rgb"
+        done
+        return
+    fi
+    case "${task_led_style#pulse-}" in
+        red) task_led_rgb='160 0 0' ;;
+        green) task_led_rgb='0 160 0' ;;
+        blue) task_led_rgb='0 0 160' ;;
+        purple) task_led_rgb='120 0 120' ;;
+        white) task_led_rgb='100 100 100' ;;
+    esac
+    task_led_scale=16
+    case "$task_led_style" in
+        pulse-*) task_led_scale=$(( tick % 16 ))
+                 [ "$task_led_scale" -le 8 ] || task_led_scale=$(( 16 - task_led_scale ))
+                 task_led_scale=$(( 8 + task_led_scale )) ;;
+    esac
+    for task_led_zone in 1 2 3; do
+        for task_led_value in $task_led_rgb; do
+            task_led_decoded="$task_led_decoded $(( task_led_value * task_led_scale / 16 ))"
+        done
     done
 }
 decode_frame() {
@@ -76,6 +192,24 @@ decode_frame() {
     done
 }
 mute_status() {
+    if [ "$mini2_mute" = 1 ]; then
+        # Mini 2 exposes its latched state on GPIOZ_3 (gpio-414), not a
+        # mute-switch label. The native client inherits a compatibility
+        # listing; this separate reader must see the physical debugfs file.
+        LD_PRELOAD= awk '
+            /^[[:space:]]*gpio-414[[:space:]]+\(/ {
+                count++
+                tail=$0
+                sub(/^.*\)[[:space:]]*/, "", tail)
+                n=split(tail, bits, /[[:space:]]+/)
+                if (n < 2 || bits[1] != "in" || (bits[2] != "hi" && bits[2] != "lo")) bad=1
+                for (i=3; i<=n; i++) if (bits[i] == "hi" || bits[i] == "lo") bad=1
+                state=(bits[2] == "hi" ? 1 : 0)
+            }
+            END { if (count != 1 || bad) exit 2; exit state }
+        ' "$MUTE_GPIO" 2>/dev/null
+        return $?
+    fi
     # Verified Plum device tree: gpio-keys/mute-switch is active-low.
     # Reading the labelled GPIO also works while LED triggers are detached.
     [ -r "$MUTE_GPIO" ] || return 2
@@ -94,6 +228,10 @@ mute_status() {
 }
 # --- Station 2 panel backend (88 LEDs, zigzag map, /dev/fb0 RGBW) ---
 PANEL_FB=${ALICE_PANEL_FB:-/dev/fb0}
+[ "$mini3_mode" = 0 ] || PANEL_FB=${ALICE_MINI3_FB:-/dev/fb0}
+panel_bytes=356
+[ "$mini3_mode" = 0 ] || panel_bytes=18
+if [ "$midi_mode" = 1 ]; then PANEL_FB=${ALICE_MIDI_FB:-/dev/fb0}; panel_bytes=72; fi
 # led x y zone: zone 1..3 by distance from the center (ring1 = inner),
 # map transcribed from the experimental index map for the Station 2 panel.
 panel_map='0 1 0 3
@@ -187,20 +325,52 @@ panel_map='0 1 0 3
 # Read just one frame and escape NUL bytes before storing it in a shell variable.
 # The prefix flags a native red warning. A short/unreadable frame is not owned.
 panel_read() {
-    task_panel_snapshot=$(od -An -v -t u1 -N 356 "$PANEL_FB" 2>/dev/null | awk '
+    task_panel_snapshot=$(od -An -v -t u1 -N "$panel_bytes" "$PANEL_FB" 2>/dev/null | awk -v bytes="$panel_bytes" -v mini3="$mini3_mode" '
         { for (i=1; i<=NF; i++) {
             n++; v=$i; out=out sprintf("\\0%03o", v)
-            if (n<=352) {
-                if (n%4==1 && v>0) red=1
-                if (n%4!=1 && v>0) other=1
+            if (mini3 || n<=352) {
+                if ((mini3 ? n%3==0 : n%4==1) && v>0) red=1
+                if ((mini3 ? n%3!=0 : n%4!=1) && v>0) other=1
             }
         } }
-        END { if (n!=356) exit 1; printf "%d %s", red && !other, out }
+        END { if (n!=bytes) exit 1; printf "%d %s", red && !other, out }
     ') || return 1
     task_panel_warning=${task_panel_snapshot%% *}
     task_panel_current=${task_panel_snapshot#* }
 }
 panel_encode() {
+    if midi_fire_enabled && [ "$1" != ' 0 0 0 0 0 0 0 0 0' ]; then
+        # Continuous red/amber lobes: no integer phase steps or hard tail edges.
+        task_panel_encoded=$(awk -v t="$midi_anim_step" 'BEGIN {
+            phase=t*24/60;
+            for(p=0;p<24;p++) {
+                a=phase-p; while(a<0)a+=24; while(a>=24)a-=24;
+                if(a>12)a=24-a; b=12-a;
+                q=1-a*a/144; u=q*q*q; u=u*u; u=u*u;
+                q=1-b*b/144; v=q*q*q; v=v*v; v=v*v;
+                r=3+250*u+225*v; g=1+115*u+9*v; blue=0;
+                if(r>253)r=253;
+                printf "\\0%03o\\0%03o\\0%03o",blue,g,r;
+            }
+        }')
+        return
+    fi
+    if [ "$midi_mode" = 1 ]; then
+        # Interpolate the three logical RGB colors around the 24-pixel BGR ring.
+        task_panel_encoded=$(awk -v v="$1" 'BEGIN {
+            split(v,a," "); for(z=0;z<3;z++) for(p=0;p<8;p++)
+                for(c=3;c>=1;c--) printf "\\0%03o",int((a[z*3+c]*(8-p)+a[((z+1)%3)*3+c]*p)/8)
+        }')
+        return
+    fi
+    if [ "$mini3_mode" = 1 ]; then
+        # Match Mini 2's pairs: logical zones 1/2/3 -> pixels 0-1/2-3/4-5.
+        task_panel_encoded=$(awk -v v="$1" 'BEGIN {
+            split(v,a," "); for(z=0;z<3;z++) for(p=0;p<2;p++)
+                printf "\\0%03o\\0%03o\\0%03o",a[z*3+3],a[z*3+2],a[z*3+1]
+        }')
+        return
+    fi
     task_panel_encoded=$(awk -v v="$1" -v map="$panel_map" '
         BEGIN {
             split(v, a, " "); lines=split(map, rows, "\n")
@@ -228,11 +398,90 @@ panel_unmuted() {
         END { exit (!found || bad || muted) }
     ' "$MUTE_GPIO"
 }
+ring_waiting=0
+ring_external=''
+ring_until=0
+ring_uptime_file=${ALISA_RING_UPTIME_FILE:-/proc/uptime}
+ring_now() {
+    IFS=' ' read -r ring_uptime ring_unused < "$ring_uptime_file" || return 1
+    ring_seconds=${ring_uptime%%.*}
+    ring_fraction=${ring_uptime#*.}00
+    ring_fraction=${ring_fraction%${ring_fraction#??}}
+    case "$ring_seconds:$ring_fraction" in ''|*[!0-9:]*) return 1 ;; esac
+    ring_now=$((ring_seconds * 100 + 1$ring_fraction - 100))
+}
+mini3_ring_ready() {
+    [ "$mini3_mode" = 1 ] || return 0
+    # A firmware repaint is ownership, not a frame we should fight. Wait for
+    # two quiet seconds before resuming; every new external frame renews it.
+    if ! ring_now; then ring_waiting=1; panel_release; return 1; fi
+    if [ "$ring_waiting" = 0 ] && [ "$panel_owned" = 1 ] &&
+       [ "$task_panel_current" != "$panel_painted" ]; then
+        ring_waiting=1
+        ring_external=$task_panel_current
+        ring_until=$((ring_now + 200))
+        panel_release
+    fi
+    if [ "$ring_waiting" = 1 ]; then
+        if [ "$task_panel_current" != "$ring_external" ]; then
+            ring_external=$task_panel_current
+            ring_until=$((ring_now + 200))
+        fi
+        [ "$ring_now" -ge "$ring_until" ] || return 1
+        ring_waiting=0
+    fi
+}
+
+logo_owned=0; logo_blocked=0; logo_saved=''; logo_painted=''
+logo_read() {
+    logo_current=$(od -An -v -tu1 -N18 "${ALISA_MIDI_LOGO_FB:-/dev/fb1}" | awk '{for(i=1;i<=NF;i++){n++;printf "\\0%03o",$i}} END {if(n!=18)exit 1}')
+}
+logo_release() {
+    if [ "$logo_owned" = 1 ]; then
+        if panel_unmuted && logo_read && [ "$logo_current" = "$logo_painted" ]; then
+            printf '%b' "$logo_saved" > "${ALISA_MIDI_LOGO_FB:-/dev/fb1}"
+        fi
+        logo_owned=0
+    fi
+}
+logo_paint() {
+    [ "$midi_mode" = 1 ] && [ "$logo_blocked" = 0 ] || return 0
+    # Geometry and device name are checked before ever touching the logo.
+    if [ -z "${ALISA_MIDI_LOGO_FB:-}" ]; then
+        IFS= read -r logo_name < /sys/class/graphics/fb1/name &&
+        IFS= read -r logo_size < /sys/class/graphics/fb1/virtual_size &&
+        IFS= read -r logo_bpp < /sys/class/graphics/fb1/bits_per_pixel &&
+        [ "$logo_name:$logo_size:$logo_bpp" = logo:6,1:24 ] || return 0
+    fi
+    panel_unmuted && logo_read || return 0
+    if [ "$logo_owned" = 1 ] && [ "$logo_current" != "$logo_painted" ]; then
+        logo_owned=0;logo_blocked=1;return 0
+    fi
+    if [ "$logo_owned" = 0 ]; then logo_saved=$logo_current;logo_owned=1;fi
+    if midi_fire_enabled &&
+       [ "$task_led_requested" != ' 0 0 0 0 0 0 0 0 0' ]; then
+        logo_painted=$(awk -v t="$midi_anim_step" 'BEGIN {
+            for(p=0;p<6;p++) {
+                x=t/60+p/6; x=x-int(x); if(x>0.5)x=1-x; x=x*2;
+                pulse=x*x*(3-2*x);
+                r=12+230*pulse;g=1+45*pulse;b=0;
+                printf "\\0%03o\\0%03o\\0%03o",b,g,r;
+            }
+        }')
+    else
+        # Static colors and previews sample the ring; animation computes directly.
+        logo_painted=$(od -An -v -tu1 -N72 "$PANEL_FB" | awk '{for(i=1;i<=NF;i++){if(n%12<3)printf "\\0%03o",$i;n++}} END {if(n!=72)exit 1}') || return 0
+    fi
+    printf '%b' "$logo_painted" > "${ALISA_MIDI_LOGO_FB:-/dev/fb1}"
+}
+
 panel_release() {
+    logo_release
     if [ "$panel_owned" = 1 ]; then
         # Firmware may already own a new warning/animation. Never clear it;
         # mute or an unknown GPIO state also forbids the final write.
-        if panel_unmuted && panel_read && [ "$task_panel_current" = "$panel_painted" ]; then
+        if { [ "$mini3_mode" = 0 ] || [ "$ring_waiting" = 0 ]; } &&
+           panel_unmuted && panel_read && [ "$task_panel_current" = "$panel_painted" ]; then
             printf '%b' "$panel_saved" > "$PANEL_FB"
         fi
         panel_owned=0
@@ -241,11 +490,112 @@ panel_release() {
 }
 panel_owned=0
 if [ "$panel_mode" = 1 ]; then
-    trap 'panel_release; exit 0' TERM INT HUP
-    trap panel_release EXIT
+    # Feed the independent clock even when the ring yields to firmware. Preview
+    # never starts it. Opening the FIFO read/write avoids a deadlock if the
+    # optional helper exits before its first read. Give the child a separate
+    # read-only FD so it still receives EOF when the parent's writer closes.
+    clock_pid=''; clock_dir=''
+    clock_stop() {
+        if [ -n "$clock_pid" ]; then
+            exec 3>&-
+            clock_wait=0
+            # Clock handoff includes a 1.25 s settling interval plus unmounts.
+            while kill -0 "$clock_pid" 2>/dev/null && [ "$clock_wait" -lt 80 ]; do
+                sleep .05; clock_wait=$((clock_wait + 1))
+            done
+            kill -TERM "$clock_pid" 2>/dev/null || true
+            wait "$clock_pid" 2>/dev/null || true
+            clock_pid=''
+        fi
+        if [ -n "$clock_dir" ]; then
+            rm -f "$clock_dir/input"; rmdir "$clock_dir"; clock_dir=''
+        fi
+    }
+    panel_finish() { panel_release; clock_stop; }
+    trap 'exit 0' TERM INT HUP
+    trap panel_finish EXIT
+    clock_mode=eyes
+    if [ "$midi_mode" = 1 ]; then
+        midi_display_file=${ALISA_MIDI_DISPLAY_FILE:-$(dirname -- "$0")/midi-display}
+        if [ -r "$midi_display_file" ]; then
+            IFS= read -r midi_display < "$midi_display_file" || midi_display=clock
+            ALISA_MIDI_EYES=0; ALISA_MIDI_MATRIX=0
+            case "$midi_display" in eyes) ALISA_MIDI_EYES=1;; matrix) ALISA_MIDI_MATRIX=1;; esac
+            export ALISA_MIDI_EYES ALISA_MIDI_MATRIX
+        fi
+    fi
+    clock_mode_file=${ALISA_CLOCK_MODE_FILE:-$(dirname -- "$0")/display-mode}
+    if [ -e "$clock_mode_file" ]; then
+        clock_mode=$(cat "$clock_mode_file" 2>/dev/null) || clock_mode=clock
+    fi
+    if [ "$mini3_mode" = 1 ] && [ "$midi_mode" = 0 ] && [ "${ALISA_MINI3_CLOCK_EYES:-0}" = 1 ] &&
+       [ "$clock_mode" = eyes ] && [ "${ALISA_LED_PREVIEW:-0}" != 1 ]; then
+        clock_dir=$(mktemp -d /tmp/alisa-ring-clock-XXXXXX)
+        mkfifo "$clock_dir/input"
+        exec 3<>"$clock_dir/input"
+        exec 4<"$clock_dir/input"
+        sh "$(dirname -- "$0")/clock-eyes.sh" <&4 3>&- 4>&- > /dev/null &
+        clock_pid=$!
+        exec 4<&-
+        trap '' PIPE
+    fi
+    midi_clock_enabled=0; midi_clock_attempts=0; midi_clock_retry_at=0
+    midi_clock_start() {
+        midi_clock_attempts=$((midi_clock_attempts+1))
+        clock_dir=$(mktemp -d /tmp/alisa-ring-clock-XXXXXX)
+        mkfifo "$clock_dir/input"
+        exec 3<>"$clock_dir/input"
+        exec 4<"$clock_dir/input"
+        sh "$(dirname -- "$0")/midi-clock.sh" <&4 3>&- 4>&- > /dev/null &
+        clock_pid=$!
+        exec 4<&-
+        trap '' PIPE
+    }
+    if [ "$midi_mode" = 1 ] && { [ "${ALISA_MIDI_MATRIX:-0}" = 1 ] || [ "${ALISA_MIDI_EYES:-0}" = 1 ]; } && [ "${ALISA_LED_PREVIEW:-0}" != 1 ]; then
+        midi_clock_enabled=1
+        midi_clock_start
+    fi
     panel_encode ' 0 0 0 0 0 0 0 0 0'; panel_dark=$task_panel_encoded
     panel_requested=''; panel_painted=''
-    while IFS= read -r -t 2 task_led_command; do
+    midi_repeat=''; midi_misses=0
+    midi_interval=2
+    if midi_fire_enabled; then midi_interval=0.02; fi
+    while :; do
+        midi_intermediate=0
+        midi_interval=2
+        if midi_fire_enabled; then midi_interval=0.02; fi
+        # Startup/after release still needs the full heartbeat grace period.
+        # A short animation tick must not exit before the first frame arrives.
+        midi_read_timeout=$midi_interval
+        [ -n "$midi_repeat" ] || midi_read_timeout=2
+        if IFS= read -r -t "$midi_read_timeout" task_led_command; then
+            midi_misses=0
+            case "$task_led_command" in
+                STYLE\ *)
+                    case "${task_led_command#STYLE }" in
+                        rainbow|red|blue|green|purple|white|off|pulse-red|pulse-blue|pulse-green|pulse-purple|pulse-white)
+                            ALISA_LED_STYLE=${task_led_command#STYLE };;
+                    esac
+                    continue;;
+            esac
+            case "$task_led_command" in F\ *|B) midi_repeat=$task_led_command;; *) midi_repeat='';; esac
+        else
+            [ "$midi_interval" != 2 ] && [ -n "$midi_repeat" ] || break
+            midi_misses=$((midi_misses+1)); [ "$midi_misses" -lt 75 ] || break
+            task_led_command=$midi_repeat; midi_intermediate=1
+        fi
+        if [ "$midi_clock_enabled" = 1 ] && [ -z "$clock_pid" ] &&
+           [ "$midi_intermediate" = 0 ] && [ "$task_led_command" != 0 ] &&
+           [ "$midi_clock_attempts" -lt 3 ] && ring_now && [ "$ring_now" -ge "$midi_clock_retry_at" ]; then
+            midi_clock_start
+        fi
+        if [ -n "$clock_pid" ] && [ "$midi_intermediate" = 0 ]; then
+            if ! kill -0 "$clock_pid" 2>/dev/null ||
+               ! printf '%s\n' "$task_led_command" >&3; then
+                clock_stop
+                if ring_now; then midi_clock_retry_at=$((ring_now+200)); fi
+            fi
+        fi
         case "$task_led_command" in
             B) task_led_requested=$blue ;;
             F\ *) decode_frame "${task_led_command#F }" || continue
@@ -260,6 +610,11 @@ if [ "$panel_mode" = 1 ]; then
             panel_release
             continue
         fi
+        if ! mini3_ring_ready; then
+            [ "$midi_intermediate" = 0 ] || continue
+            case "$task_led_command" in F\ *) printf 'FRAME\n' ;; B) printf 'BLUE\n' ;; esac
+            continue
+        fi
         if { [ "$panel_owned" = 0 ] || [ "$task_panel_current" != "$panel_painted" ]; } &&
            [ "$task_panel_warning" = 1 ]; then
             panel_release
@@ -272,7 +627,9 @@ if [ "$panel_mode" = 1 ]; then
             panel_owned=1
             task_led_acquired=1
         fi
-        if [ "$panel_requested" != "$task_led_requested" ]; then
+        if ring_now; then midi_anim_step=$((ring_now % 900)); fi
+        if [ "$panel_requested" != "$task_led_requested" ] ||
+           midi_fire_enabled; then
             panel_encode "$task_led_requested"
             panel_painted=$task_panel_encoded
             panel_requested=$task_led_requested
@@ -282,6 +639,8 @@ if [ "$panel_mode" = 1 ]; then
         if [ "$task_panel_current" != "$panel_painted" ]; then
             printf '%b' "$panel_painted" > "$PANEL_FB"
         fi
+        logo_paint
+        [ "$midi_intermediate" = 0 ] || continue
         case "$task_led_command" in
             F\ *) printf 'FRAME\n' ;;
             B) [ "$task_led_acquired" = 0 ] || printf 'BLUE\n' ;;
@@ -299,7 +658,7 @@ active_trigger() {
 }
 triggers() {
     task_led_triggers=''
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             active_trigger "$LED:$task_led_color:ring$task_led_zone"
             task_led_triggers="$task_led_triggers $task_led_trigger"
@@ -309,7 +668,7 @@ triggers() {
 detach_triggers() {
     # Keep native wake/listening animations out of the entire GPT session,
     # including silent frames. The physical mute switch is checked separately.
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             printf 'none\n' > "$LED:$task_led_color:ring$task_led_zone/trigger"
         done
@@ -317,7 +676,7 @@ detach_triggers() {
 }
 restore_triggers() {
     set -- $saved_triggers
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             task_led_path="$LED:$task_led_color:ring$task_led_zone"
             active_trigger "$task_led_path"
@@ -333,7 +692,7 @@ restore_triggers() {
 }
 frame() {
     task_led_frame=''
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             IFS= read -r task_led_value < "$LED:$task_led_color:ring$task_led_zone/brightness"
             task_led_frame="$task_led_frame $task_led_value"
@@ -342,16 +701,30 @@ frame() {
 }
 paint() {
     set -- $1
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             printf '%s\n' "$1" > "$LED:$task_led_color:ring$task_led_zone/brightness"
             shift
         done
     done
 }
+# Expand a logical frame to the physical channels following zone_map.
+# Logical zones repeat in pairs on Mini 2 and map 1:1 elsewhere.
+map_frame() {
+    set -- $1
+    task_led_logical=1
+    task_led_mapped=''
+    for task_led_ref in $zone_map; do
+        while [ "$task_led_logical" -lt "$task_led_ref" ]; do
+            shift 3
+            task_led_logical=$((task_led_logical + 1))
+        done
+        task_led_mapped="$task_led_mapped $1 $2 $3"
+    done
+}
 restore_frame() {
     set -- $saved
-    for task_led_zone in 1 2 3; do
+    for task_led_zone in $zones; do
         for task_led_color in red green blue; do
             task_led_path="$LED:$task_led_color:ring$task_led_zone"
             # A new owner must not lose its trigger to a saved zero brightness.
@@ -366,13 +739,26 @@ restore_frame() {
 release() {
     if [ "$owned" = 1 ]; then
         frame; task_led_current=$task_led_frame
-        [ "$task_led_current" != "$painted" ] || restore_frame
+        if [ "$mini2_mute" = 1 ]; then
+            # Return triggers without brightness writes while muted/unknown.
+            # Firmware owns the warning, even if it matches our last frame.
+            if mute_status; then :; else
+                task_led_release_mute=$?
+                if [ "$task_led_release_mute" = 1 ]; then
+                    [ "$task_led_current" != "$painted" ] || restore_frame
+                fi
+            fi
+        else
+            [ "$task_led_current" != "$painted" ] || restore_frame
+        fi
         restore_triggers
         owned=0
         printf 'STOCK\n'
     fi
 }
-trap 'release; exit 0' TERM INT HUP
+# A signal can interrupt IFS= read with an empty temporary IFS. Restore
+# splitting before walking the physical zones and saved trigger list.
+trap 'IFS=" "; release; exit 0' TERM INT HUP
 trap release EXIT
 while IFS= read -r -t 2 task_led_command; do
     case "$task_led_command" in
@@ -385,6 +771,9 @@ while IFS= read -r -t 2 task_led_command; do
         0) release; continue ;;
         *) continue ;;
     esac
+    # Comparisons and painting below work on physical channels.
+    map_frame "$task_led_requested"
+    task_led_requested=$task_led_mapped
     if mute_status; then
         release
         continue
@@ -410,7 +799,7 @@ while IFS= read -r -t 2 task_led_command; do
     if [ "$owned" = 0 ]; then
         # A wake/listening color at mode entry is transient. The ordinary
         # idle state after closing chat is dark; native triggers are restored.
-        saved=' 0 0 0 0 0 0 0 0 0'
+        saved=$dark_frame
         [ "${ALISA_LED_PREVIEW:-0}" != 1 ] || saved=$task_led_current
         triggers; saved_triggers=$task_led_triggers
         owned=1

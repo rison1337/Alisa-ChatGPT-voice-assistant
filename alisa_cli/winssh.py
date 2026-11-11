@@ -3,6 +3,49 @@ import base64,hashlib,select,socket,subprocess,threading,time
 from pathlib import Path
 from .errors import PublicError
 
+# Passwords never enter config, argv, environment, or update handoff files.
+_passwords={}
+
+def credential_id(config):
+    return (config['host'],config.get('port',2222),config.get('user') or 'root',config.get('known_hosts'))
+
+def remembered_password(config):
+    key=credential_id(config)
+    if key in _passwords:return _passwords[key]
+    from .windows_credentials import request
+    reply=request(key,'get')
+    if reply and isinstance(reply.get('password'),str):
+        _passwords[key]=reply['password'];return reply['password']
+    return None
+
+def share_password(config):
+    from .windows_credentials import request
+    password=remembered_password(config)
+    return password is not None and bool(request(credential_id(config),'put',password))
+
+def prepare(config):
+    """Ask on the console thread, before dashboard workers start reading SSH."""
+    if config.get('ssh_auth')!='password' or remembered_password(config) is not None:return
+    from . import ui
+    if not ui.interactive() or threading.current_thread() is not threading.main_thread():
+        raise PublicError('ssh_password_required')
+    password=ui.secret('Пароль SSH колонки')
+    try:use_password(config,password,persist=False)
+    finally:password=None
+
+def use_password(config,password,persist=True):
+    """Verify existing access; never install keys or change the SSH server."""
+    candidate={**config,'identity':None,'ssh_auth':'empty-password' if password=='' else 'password'}
+    result=run(candidate,'id -u',password=password)
+    if result.stdout.strip()!=b'0':raise RuntimeError('SSH работает, но у пользователя нет прав root.')
+    if persist:
+        from .state import save
+        save(candidate)
+    config.update(candidate)
+    if password!='':
+        _passwords[credential_id(config)]=password;share_password(config)
+    return {'ssh':True,'root':True,'key_saved':False}
+
 def library():
     try:import paramiko;return paramiko
     except ImportError:raise RuntimeError('Неполный Windows-пакет: отсутствует Paramiko. Повторите установку CLI.') from None
@@ -43,17 +86,38 @@ def trust(config,confirm):
     config['known_hosts']=str(known)
 
 def connect(config,password=None):
-    p=library();client=p.SSHClient();known=config.get('known_hosts')
+    p=library()
+    class StationClient(p.SSHClient):
+        def _auth(self, username, *args, **kwargs):
+            # SSHClient verifies the pinned host key before calling _auth.
+            # OpenSSH also tries none first (root can have no password).
+            if config.get('_allow_none',True):
+                try:
+                    self.get_transport().auth_none(username)
+                    if self.get_transport().is_authenticated():return
+                except p.AuthenticationException:
+                    pass
+            return super()._auth(username, *args, **kwargs)
+    client=StationClient();known=config.get('known_hosts')
     if not known or not Path(known).is_file():raise RuntimeError('Сначала подтвердите SSH-ключ колонки через настройку подключения.')
     client.load_host_keys(str(known));client.set_missing_host_key_policy(p.RejectPolicy())
     try:
+        if password is None and config.get('ssh_auth')=='empty-password':password=''
+        if password is None and config.get('ssh_auth')=='password':
+            password=remembered_password(config)
+            if password is None:raise PublicError('ssh_password_required')
         identity=config.get('identity') if password is None else None
         client.connect(config['host'],port=config.get('port',2222),username=config.get('user') or 'root',
                        password=password,key_filename=str(identity) if identity else None,
                        allow_agent=False,look_for_keys=False,timeout=8,banner_timeout=12,auth_timeout=12)
         client.get_transport().set_keepalive(5);return client
     except p.BadHostKeyException:client.close();raise PublicError('ssh_hostkey') from None
-    except p.AuthenticationException:client.close();raise PublicError('ssh_auth') from None
+    except p.AuthenticationException:
+        _passwords.pop(credential_id(config),None)
+        from .windows_credentials import request
+        request(credential_id(config),'clear')
+        client.close();raise PublicError('ssh_auth') from None
+    except PublicError:client.close();raise
     except (OSError,p.SSHException):client.close();raise PublicError('ssh_unreachable') from None
 
 def run(config,command,data=None,check=True,timeout=60,password=None):
@@ -95,7 +159,10 @@ def install_key(config,password):
     path=HOME/'ssh'/('id_ed25519_'+suffix)
     existed=path.exists()
     if password is None and not config.get('identity') and not existed:
-        raise RuntimeError('Для первого входа введите пароль SSH или укажите существующий ключ через --identity.')
+        # Probe the pinned host before creating files: some rooted Dropbear
+        # installations accept SSH's none method, just as OpenSSH does.
+        if run(config,'id -u').stdout.strip()!=b'0':
+            raise RuntimeError('SSH работает, но у пользователя нет прав root.')
     if not path.exists():
         key=Ed25519PrivateKey.generate()
         write_private(path,key.private_bytes(s.Encoding.PEM,s.PrivateFormat.OpenSSH,s.NoEncryption()))
@@ -108,8 +175,8 @@ def install_key(config,password):
     authentication=config if password is not None or config.get('identity') else candidate
     result=run(authentication,command,password=password,check=False)
     if result.returncode==9:raise RuntimeError('SSH работает, но у пользователя нет прав root.')
-    if result.returncode:raise RuntimeError('Не удалось установить отдельный SSH-ключ.')
-    if run(candidate,'id -u').stdout.strip()!=b'0':raise RuntimeError('Вход отдельным ключом не подтверждён. Настройки не сохранены.')
+    if result.returncode:raise PublicError('ssh_key_install')
+    if run({**candidate,'_allow_none':False},'id -u').stdout.strip()!=b'0':raise RuntimeError('Вход отдельным ключом не подтверждён. Настройки не сохранены.')
     config.update(candidate);save(config);return {'ssh':True,'root':True,'key_saved':True}
 
 class Stream:

@@ -30,7 +30,7 @@ class TerminalUI(unittest.TestCase):
    if child.isalive():child.terminate(force=True)
  def menu_item(self,child,page,value,enter=True):
   from alisa_cli import menus,state
-  config=state.defaults('native');config['vpn']['enabled']=True
+  config=state.defaults('native');config['vpn']['enabled']=True;config['installed']=True
   index=next(i for i,(_,target) in enumerate(menus.entries('native',page,config)) if target==value)
   child.send('\x1b[H'+'\x1b[B'*index+('\r' if enter else ''))
  def test_arrows_select_and_space_checks(self):
@@ -186,7 +186,8 @@ try: menus.run('native',execute,start_page='settings')
 except KeyboardInterrupt: print('CALLS',calls)
 """
   def drive(c):
-   c.expect('Настройки');self.menu_item(c,'settings',('settings','listen-on'),enter=False)
+   c.expect('Настройки');self.menu_item(c,'settings','@lighting');c.expect_screen('Цвет и анимация')
+   self.menu_item(c,'lighting',('settings','listen-on'),enter=False)
    c.expect_screen('В паузах GPT: выключена')
    c.send(' ');time.sleep(.4);c.send(' ');time.sleep(.4)
    c.sendcontrol('c');c.expect('CALLS')

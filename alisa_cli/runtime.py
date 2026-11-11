@@ -21,14 +21,23 @@ def bridge_command(config,action,**kwargs):
 
 def status(config):
     if config['mode']=='native':
-        r=Station(config).run(NATIVE+'/bin/alisa-standalone status',check=False)
+        binary=shlex.quote(NATIVE+'/bin/alisa-standalone')
+        # Check absence separately: an existing ELF can also exit 127 when
+        # its loader or a shared library is unavailable. Keep that failure.
+        missing=json.dumps({'phase':'stopped','agent_connected':False,'error':''})
+        command=f"if [ ! -e {binary} ] && [ ! -L {binary} ]; then printf '%s\\n' {shlex.quote(missing)}; else {binary} status; fi"
+        r=Station(config).run(command,check=False)
         if r.returncode==255:check_result(r)
         try:result=json.loads(r.stdout)
         except ValueError:
             check_result(r)
             raise PublicError('station_reply_invalid') from None
         if not isinstance(result,dict):raise PublicError('station_reply_invalid')
-        if result.get('error')=='control_unavailable':result={'phase':'stopped','agent_connected':False,'error':''}
+        # Startup transients arrive with exit code 2 while the monitor creates
+        # the state directory. state_unavailable also survives as a sticky
+        # last-call error with exit 0; only the failed reply is transient.
+        transient=result.get('error')=='control_unavailable' or r.returncode==2 and result.get('error')=='state_unavailable'
+        if transient:result={'phase':'stopped','agent_connected':False,'error':''}
         else:
             check_result(r)
             if not isinstance(result.get('phase'),str):raise PublicError('station_reply_invalid')
@@ -51,12 +60,29 @@ def status(config):
 def native_environment(config):
     style=config['led'] if supports_lighting(config.get('model')) else 'off'
     lines=['export ALISA_LED_STYLE='+shlex.quote(style)]
+    if config.get('model')=='bergamot':lines.append('export ALISA_MINI3_CLOCK_EYES=1')
+    if config.get('model')=='cucumber':
+        if config.get('midi_eyes',False):lines.append('export ALISA_MIDI_EYES=1')
+        elif config.get('midi_matrix',False):lines.append('export ALISA_MIDI_MATRIX=1')
+    if config.get('disable_stun',False):lines.append('export ALISA_DISABLE_STUN=1')
     if config['vpn'].get('enabled',False):
         lines+=['export ALISA_VPN_REQUIRED=1','export ALISA_PROXY_URL=socks5h://127.0.0.1:18081','export ALISA_ICE_BIND_ADDRESS=172.31.254.1','export LD_PRELOAD='+TOOLS+'/mark.so']
     return ('\n'.join(lines)+'\n').encode()
 
 def listening_preference(config):
     return b'1\n' if supports_lighting(config.get('model')) and config.get('listen_led',False) and config['led']!='off' else b'0\n'
+
+def lighting_scope_preference(config):
+    scope=config.get('led_scope','speaking')
+    style=config['led'] if supports_lighting(config.get('model')) else 'off'
+    return (scope+' '+style+'\n').encode()
+
+def midi_display_preference(config):
+    from .display import preference
+    return (preference(config)+'\n').encode()
+
+def midi_fire_preference(config):
+    return b'1\n' if config.get('midi_fire',False) else b'0\n'
 
 def apply_settings(config):
     s=Station(config);mode=config['mode'];base=NATIVE if mode=='native' else '/data/opt/alice-voice'
@@ -65,6 +91,11 @@ def apply_settings(config):
         vpn=config['vpn'].get('enabled',False)
         s.put(NATIVE+'/runtime.env',native_environment(config))
         s.put(NATIVE+'/listen-led',listening_preference(config))
+        s.put(NATIVE+'/led-scope',lighting_scope_preference(config))
+        if config.get('model')=='bergamot':s.put(NATIVE+'/display-mode',(config.get('display','eyes')+'\n').encode())
+        if config.get('model')=='cucumber':
+            s.put(NATIVE+'/midi-display',midi_display_preference(config))
+            s.put(NATIVE+'/midi-fire',midi_fire_preference(config))
         if vpn:
             s.run(TOOLS+'/vpn.sh guard')
             s.put(TOOLS+'/vpn-required',b'required\n')
@@ -75,7 +106,12 @@ def update_preferences(config,previous):
     """Apply only changed preferences; never restart audio or a conversation."""
     phrases=config['phrases']!=previous['phrases'];led=config['led']!=previous['led']
     listening=config.get('listen_led',False)!=previous.get('listen_led',False)
-    if not config.get('installed') or not (phrases or led or listening):return
+    scope=config.get('led_scope','speaking')!=previous.get('led_scope','speaking')
+    display=config['mode']=='native' and config.get('model')=='bergamot' and config.get('display','eyes')!=previous.get('display','eyes')
+    midi=config['mode']=='native' and config.get('model')=='cucumber'
+    midi_display=midi and midi_display_preference(config)!=midi_display_preference(previous)
+    midi_fire=midi and midi_fire_preference(config)!=midi_fire_preference(previous)
+    if not config.get('installed') or not (phrases or led or listening or scope or display or midi_display or midi_fire):return
     native=config['mode']=='native';station=Station(config)
     current=status(config) if native and led else {}
     live=bool(current.get('pid') or current.get('agent_connected'))
@@ -83,8 +119,12 @@ def update_preferences(config,previous):
         raise RuntimeError('Для смены подсветки без перезапуска обновите нативный клиент через мастер установки.')
     base=NATIVE if native else '/data/opt/alice-voice'
     try:
+        if display:station.put(NATIVE+'/display-mode',(config.get('display','eyes')+'\n').encode())
+        if midi_display:station.put(NATIVE+'/midi-display',midi_display_preference(config))
+        if midi_fire:station.put(NATIVE+'/midi-fire',midi_fire_preference(config))
         if phrases:station.put(base+'/commands.txt',command_file(config['phrases']))
         if native and (led or listening):station.put(NATIVE+'/listen-led',listening_preference(config))
+        if native and (led or scope):station.put(NATIVE+'/led-scope',lighting_scope_preference(config))
         if led and native:
             station.put(NATIVE+'/runtime.env',native_environment(config))
             if live:native_action(config,'led',config['led'])
@@ -93,7 +133,15 @@ def update_preferences(config,previous):
         # Restore this small preference transaction without restarting audio.
         import contextlib
         with contextlib.suppress(Exception):
+            if midi_display:station.put(NATIVE+'/midi-display',midi_display_preference(previous))
+        with contextlib.suppress(Exception):
+            if midi_fire:station.put(NATIVE+'/midi-fire',midi_fire_preference(previous))
+        with contextlib.suppress(Exception):
+            if native and (led or scope):station.put(NATIVE+'/led-scope',lighting_scope_preference(previous))
+        with contextlib.suppress(Exception):
             if native and (led or listening):station.put(NATIVE+'/listen-led',listening_preference(previous))
+        with contextlib.suppress(Exception):
+            if display:station.put(NATIVE+'/display-mode',(previous.get('display','eyes')+'\n').encode())
         with contextlib.suppress(Exception):
             if phrases:station.put(base+'/commands.txt',command_file(previous['phrases']))
         with contextlib.suppress(Exception):
@@ -115,6 +163,10 @@ def start(config,foreground=False):
         # Refuse to steal another owner's profile, including the former public bridge.
         active=s.text('for p in $(pidof quasar_launcher2 2>/dev/null || true); do tr "\\000" " " < /proc/$p/cmdline; done')
         if '/data/opt/alice-voice/' in active:raise RuntimeError('Сначала остановите мост: alisa bridge stop')
+        if config.get('disable_stun',False):
+            info=json.loads(s.text(NATIVE+'/bin/alisa-standalone info'))
+            if info.get('ice_stun_toggle_revision')!=1:
+                raise RuntimeError('Для отключения STUN нужен пересобранный клиент. Обновите комплект перед запуском.')
         if config['vpn'].get('enabled'):
             if s.run(TOOLS+'/vpn.sh status',check=False).returncode:raise RuntimeError('VLESS выключен. Запустите alisa native vpn start; прямое подключение запрещено.')
         apply_settings(config);s.run(NATIVE+'/run.sh start')

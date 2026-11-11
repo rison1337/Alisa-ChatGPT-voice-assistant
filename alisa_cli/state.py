@@ -2,10 +2,15 @@ from __future__ import annotations
 import json,os,re,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-HOME=Path(os.environ.get('ALISA_HOME',Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData/Local'))/'AlisaVoice/state' if os.name=='nt' else Path.home()/'.local/state/alisa-voice'))
+BASE_HOME=Path(os.environ.get('ALISA_HOME',Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData/Local'))/'AlisaVoice/state' if os.name=='nt' else Path.home()/'.local/state/alisa-voice'))
+DEVICE=os.environ.get('ALISA_NATIVE_DEVICE','default')
+if DEVICE!='default' and not re.fullmatch('[0-9a-f]{32}',DEVICE):raise ValueError('Некорректный профиль колонки')
+HOME=BASE_HOME if DEVICE=='default' else BASE_HOME/'devices'/DEVICE
 MODES=('native','bridge')
 STYLES=('rainbow','red','blue','green','purple','white','pulse-red','pulse-blue','pulse-green','pulse-purple','pulse-white','off')
 STYLE_NAMES={'rainbow':'Радуга','red':'Красный','blue':'Синий','green':'Зелёный','purple':'Фиолетовый','white':'Белый','off':'Выключена'}
+LED_SCOPES=('speaking','active')
+LED_SCOPE_NAMES={'speaking':'Только во время ответа','active':'Во время ответа и прослушивания'}
 VOICES=('breeze','cove','ember','fathom','glimmer','juniper','maple','orbit','vale')
 DEFAULT_PHRASES={'open':'открой чат','close':'закрой чат','new':'создай новый чат','previous':'открой предыдущий чат'}
 
@@ -26,13 +31,13 @@ def write_private(path,value):
 def defaults(mode):
     if mode not in MODES:raise ValueError('Выберите native или bridge')
     return {'version':1,'mode':mode,'host':'','user':'root','port':2222,'identity':None,
-        'autostart':False,'led':'rainbow','listen_led':False,'phrases':dict(DEFAULT_PHRASES),'installed':False,
+        'autostart':False,'led':'rainbow','led_scope':'speaking','listen_led':False,'disable_stun':False,'display':'eyes','phrases':dict(DEFAULT_PHRASES),'installed':False,
         'vpn':{'enabled':False,'autostart':False,'required':False}}
 
 def load(mode):
     p=HOME/mode/'config.json'
     if not p.exists():return defaults(mode)
-    value=json.loads(p.read_text(encoding='utf-8'));value.setdefault('listen_led',False);validate(value);return value
+    value=json.loads(p.read_text(encoding='utf-8'));value.setdefault('listen_led',False);value.setdefault('led_scope','speaking');validate(value);return value
 
 def save(value):
     validate(value);write_private(HOME/value['mode']/'config.json',value)
@@ -53,11 +58,18 @@ def command_file(phrases):
 
 def validate(value):
     if 'password' in value:raise ValueError('Пароль SSH не сохраняется в настройках')
+    if value.get('ssh_auth') not in (None,'password','empty-password'):raise ValueError('Неизвестный способ входа SSH')
     if value.get('mode') not in MODES:raise ValueError('Неизвестный режим')
     host=value.get('host','')
     if not isinstance(host,str) or not host or host.startswith('-') or re.search(r'\s|[\x00-\x1f]',host):raise ValueError('Некорректный SSH-адрес')
     if value.get('port') is not None and (not isinstance(value['port'],int) or not 1<=value['port']<=65535):raise ValueError('Некорректный SSH-порт')
     if value.get('user') and not re.fullmatch('[a-zA-Z0-9_-]+',value['user']):raise ValueError('Некорректный SSH-пользователь')
     if value.get('led') not in STYLES:raise ValueError('Неизвестный цвет/анимация')
+    if value.get('led_scope','speaking') not in LED_SCOPES:raise ValueError('Неизвестный режим подсветки')
     if not isinstance(value.get('listen_led',False),bool):raise ValueError('Подсветка в паузах должна быть включена или выключена')
+    if not isinstance(value.get('disable_stun',False),bool):raise ValueError('Отключение STUN должно быть включено или выключено')
+    if not isinstance(value.get('midi_matrix',False),bool):raise ValueError('Матрица Миди должна быть включена или выключена')
+    if not isinstance(value.get('midi_eyes',False),bool):raise ValueError('Глаза Миди должны быть включены или выключены')
+    if not isinstance(value.get('midi_fire',False),bool):raise ValueError('Пламя Миди должно быть включено или выключено')
+    if value.get('display','eyes') not in ('eyes','clock'):raise ValueError('Неизвестный режим дисплея')
     command_file(value['phrases'])

@@ -24,11 +24,32 @@ def main():
   (device/'relaunch.txt').write_text(__version__);return 0
  if args[0]=='echo':print(json.dumps(args[1:],ensure_ascii=False));return 7
  state=json.loads((device/'runtime.json').read_bytes())
+ if args[0] in ('switch-update','switch-legacy-update'):
+  from alisa_cli import devices
+  if os.environ.get('ALISA_FIXTURE_CHECK_MEMORY'):
+   import hashlib
+   from alisa_cli.windows_credentials import request
+   password=os.urandom(24).hex()
+   assert request(('fixture',2222,'root',None),'put',password)
+   (device/'password-digest').write_text(hashlib.sha256(password.encode()).hexdigest())
+  if args[0]=='switch-legacy-update':os.environ.pop('ALISA_WINDOWS_DEVICE_HANDOFF',None)
+  devices.restart(devices.Switch('a'*32,['native','fixture-update',*args[1:]]))
+ if args[:2]==['native','fixture-update']:
+  (device/'selected-profile.txt').write_text(os.environ.get('ALISA_NATIVE_DEVICE','default'))
+  updates.mode_plan=lambda:[{'mode':'native','running':state['agent_connected']}]
+  ui.interactive=lambda:False
+  return updates.command(args[2:])
  if args[0]=='update':
   updates.mode_plan=lambda:[{'mode':'native','running':state['agent_connected']}]
   ui.interactive=lambda:os.environ.get('ALISA_FIXTURE_RELAUNCH')=='1'
   return updates.command(args[1:])
  mode,action=args[:2]
+ if os.environ.get('ALISA_FIXTURE_CHECK_MEMORY'):
+  import hashlib
+  from alisa_cli.windows_credentials import request
+  reply=request(('fixture',2222,'root',None),'get')
+  if not reply or hashlib.sha256((reply.get('password') or '').encode()).hexdigest()!=(device/'password-digest').read_text():
+   print('fixture_credential_missing');return 1
  if action=='status':print(json.dumps(state));return 0
  if action=='install':
   if '--dry-run' in args:return 0
@@ -62,8 +83,8 @@ class WindowsLauncher(unittest.TestCase):
     def package(cls, root, version):
         root.mkdir()
         shutil.copytree(ROOT / 'windows/runtime', root / 'windows/runtime')
-        names = ['alisa_cli/' + name + '.py' for name in ('app_install', 'errors', 'windows', 'state', 'updates', 'ui')]
-        names += ['windows/install.py', 'windows/launcher.py', 'scripts/update_worker.py']
+        names = ['alisa_cli/' + name + '.py' for name in ('app_install', 'errors', 'windows', 'state', 'updates', 'ui','devices','firmware','windows_credentials')]
+        names += ['windows/install.py', 'windows/launcher.py','windows/credential_broker.py', 'scripts/update_worker.py']
         for name in names:
             target = root / name;target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
@@ -120,6 +141,28 @@ class WindowsLauncher(unittest.TestCase):
                 if failure:self.assertEqual((device/'relaunch.txt').read_text(), '1.0.0')
                 self.assertNotIn(b'Traceback', result.stdout + result.stderr)
                 self.assertEqual(list(base.glob('.launcher-run-*')), [])
+
+    def test_device_switch_keeps_supervisor_for_update_and_rollback(self):
+        for legacy in (False,True):
+            for failed in (False,True):
+                with self.subTest(legacy=legacy,failed=failed):
+                    label='profile-'+str(int(legacy))+'-'+str(int(failed))
+                    folder,base,state,device,env=self.profile(label)
+                    profile=state/'devices'/('a'*32);profile.mkdir(parents=True)
+                    (profile/'session.json').write_bytes(b'synthetic second account')
+                    original=(state/'session.json').read_bytes()
+                    env['ALISA_FIXTURE_FAIL']='candidate' if failed else ''
+                    env['ALISA_FIXTURE_CHECK_MEMORY']='1'
+                    action='switch-legacy-update' if legacy else 'switch-update'
+                    result=self.launch(base,[action,'--archive',self.archive,'--version','2.0.0','--yes'],env,folder)
+                    self.assertEqual(result.returncode,int(failed),result.stdout+result.stderr)
+                    receipt=json.loads((profile/'update-status.json').read_bytes())
+                    self.assertEqual(receipt['phase'],'rolled_back' if failed else 'complete')
+                    self.assertEqual((device/'selected-profile.txt').read_text(),'a'*32)
+                    self.assertEqual((state/'session.json').read_bytes(),original)
+                    self.assertEqual((profile/'session.json').read_bytes(),b'synthetic second account')
+                    self.assertFalse((state/'update-status.json').exists())
+                    self.assertEqual((device/'components.txt').read_text(),'1.0.0' if failed else '2.0.0')
 
     def test_cmd_preserves_unicode_arguments_spaces_quotes_and_plain_exit_code(self):
         folder, base, state, device, env = self.profile('папка с пробелами')

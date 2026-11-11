@@ -25,13 +25,13 @@ class Station2Integration(unittest.TestCase):
         return value
 
     def test_shipped_bundle_loads_and_gain_is_isolated_to_station2(self):
-        for model in ('lite1','lite2','yandexmidi'):
+        for model in ('lite1','lite2','mini2','yandexmidi','cucumber'):
             with self.subTest(model=model),patch.object(install,'Station') as station:
                 station.return_value.text.side_effect=stock
                 files=install.native_files(station.return_value,model)
                 launch=json.loads(files[runtime.NATIVE+'/launch.bridge.json'])
                 envs=[env for node in launch['nodes'] for task in node['tasks'] for env in task['envs']]
-                self.assertEqual('ALICE_CAPTURE_GAIN=16' in envs,model=='yandexmidi')
+                self.assertEqual('ALICE_CAPTURE_GAIN=16' in envs,model in ('yandexmidi','cucumber'))
                 self.assertEqual(files[runtime.NATIVE+'/run.sh'],(state.ROOT/'engines/native/station/run.sh').read_bytes())
                 self.assertTrue(files[runtime.NATIVE+'/mute_gpio.so'])
                 station.return_value.put.assert_not_called()
@@ -53,8 +53,8 @@ class Station2Integration(unittest.TestCase):
             self.assertEqual(value['model'],'yandexmidi');self.assertEqual(value['led'],style)
             self.assertFalse(value['listen_led']);self.assertEqual(value['phrases'],before['phrases'])
             entries=menus.entries('native','settings',value)
-            self.assertIn(('Подсветка',('settings','led')),entries)
-            self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),entries)
+            self.assertIn(('Подсветка','@lighting'),entries)
+            self.assertIn(('[ ] Подсветка в паузах GPT',('settings','listen-on')),menus.entries('native','lighting',value))
             self.assertIn(('ALISA_LED_STYLE='+style).encode(),runtime.native_environment(value))
             value['listen_led']=True
             self.assertEqual(runtime.listening_preference(value),b'0\n' if style=='off' else b'1\n')
@@ -70,7 +70,7 @@ class Station2Integration(unittest.TestCase):
             else:self.assertEqual(value['led'],'red')
 
     def test_other_models_keep_their_lighting_preferences(self):
-        for model in ('lite1','lite2'):
+        for model in ('lite1','lite2','mini2'):
             value=self.config();value['listen_led']=True
             firmware.apply_model(value,model)
             self.assertEqual(value['led'],'rainbow');self.assertTrue(value['listen_led'])

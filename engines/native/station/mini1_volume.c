@@ -3,9 +3,9 @@
  * rather than the real libasound that remains resident after the first call.
  */
 #define _POSIX_C_SOURCE 200809L
+#include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>
-#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
@@ -47,7 +47,9 @@ void snd_pcm_sw_params_free(void *p) {
 }
 
 static int volume_level(void) {
-    static int cached = 10000;
+    /* Until a valid level is read, keep output silent. A failed refresh
+     * preserves the last valid level. */
+    static int cached = 0;
     static struct timespec last;
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return cached;
@@ -59,10 +61,12 @@ static int volume_level(void) {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return cached;
     char buf[32]; ssize_t len = read(fd, buf, sizeof(buf) - 1); close(fd);
-    if (len <= 0) return cached;
+    if (len <= 0 || len == sizeof(buf) - 1) return cached;
     buf[len] = 0;
     char *end; long level = strtol(buf, &end, 10);
-    if (end != buf && level >= 0 && level <= 10000) cached = (int)level;
+    if (end == buf || level < 0 || level > 10000) return cached;
+    while (isspace((unsigned char)*end)) ++end;
+    if (!*end) cached = (int)level;
     return cached;
 }
 
@@ -71,13 +75,14 @@ long snd_pcm_writei(void *pcm, const void *data, unsigned long frames) {
     if (!fn) fn = symbol("snd_pcm_writei");
     if (!fn) return -ENOSYS;
     int level = volume_level();
-    if (level == 10000 || frames == 0 || frames > 8192) return fn(pcm, data, frames);
-    int16_t *scaled = malloc(frames * 2 * sizeof(int16_t));
-    if (!scaled) return fn(pcm, data, frames);
+    if (level == 10000 || frames == 0) return fn(pcm, data, frames);
+    /* A short write is valid ALSA behavior. The caller advances by the
+     * number of frames returned and retries the rest. */
+    enum { BLOCK_FRAMES = 1024 };
+    int16_t scaled[BLOCK_FRAMES * 2];
+    unsigned long count = frames < BLOCK_FRAMES ? frames : BLOCK_FRAMES;
     const int16_t *input = data;
-    for (unsigned long i = 0; i < frames * 2; ++i)
+    for (unsigned long i = 0; i < count * 2; ++i)
         scaled[i] = (int16_t)((int32_t)input[i] * level / 10000);
-    long result = fn(pcm, scaled, frames);
-    free(scaled);
-    return result;
+    return fn(pcm, scaled, count);
 }

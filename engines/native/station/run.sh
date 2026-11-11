@@ -62,7 +62,7 @@ case "${1:-}" in
         "$BASE/profile.sh" bridge
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
-            if grep -Fq 'amlogic, axg' /proc/device-tree/compatible &&
+            if tr '\000' '\n' < /proc/device-tree/compatible | grep -Eq '^amlogic,[[:space:]]*axg$' &&
                grep -Eq '"deviceType"[[:space:]]*:[[:space:]]*"yandexmini"' /system/vendor/quasar/quasar.cfg; then
                 export ALISA_MINI1=1
                 export ALISA_AGENT_DONOR=/bin/true
@@ -73,17 +73,30 @@ case "${1:-}" in
                 export ALISA_PCM_DEVICE=plughw:0,0
                 export ALISA_VOLUME_FILE=/data/quasar/last_vendor_volume
             fi
+            # If IPv4 is available, avoid dual-stack STUN delays. Bind the
+            # IPv4 wildcard, not today's interface address: each new ICE agent
+            # then gathers current interfaces after Wi-Fi/DHCP changes. Keep
+            # explicit VPN bindings and the IPv6-only fallback unchanged.
+            if [ -z "${ALISA_ICE_BIND_ADDRESS:-}" ]; then
+                task_ice_address=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="src") {print $(i+1);exit}}') || task_ice_address=''
+                case "$task_ice_address" in
+                    ''|*[!0-9.]*) ;;
+                    *) export ALISA_ICE_BIND_ADDRESS=0.0.0.0 ;;
+                esac
+            fi
             # Stations whose debugfs listing lacks the client's "|mute-switch "
             # line would otherwise silence the microphone. Lite 1 has no switch
-            # at all and gets a static always-on listing. Yandex Station 2
-            # (yandexmidi) labels it MUTE_SWITCH/MUTE_STATE with active-low
-            # polarity; mute_gpio.so converts that listing on each read so the
-            # physical mute switch keeps working.
+            # at all and gets a static always-on listing; Mini 2 has a momentary
+            # button handled by maind before VQE and gets the same listing.
+            # Yandex Station 2 (yandexmidi) labels it MUTE_SWITCH/MUTE_STATE
+            # with active-low polarity; mute_gpio.so converts that listing on
+            # each read so the physical mute switch keeps working.
             if [ -r "$BASE/mute_gpio.so" ]; then
                 if tr '\000' '\n' < /proc/device-tree/compatible | grep -Eq '^(yandex,station-midi|yandexmidi|station-midi)$'; then
                     export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }$BASE/mute_gpio.so"
-                elif ( grep -Fq 'yandex,station-micro' /proc/device-tree/compatible ||
-                       [ "${ALISA_MINI1:-0}" = 1 ] ) &&
+                elif { grep -Fq 'yandex,station-micro' /proc/device-tree/compatible ||
+                       grep -Fq 'yandex,station-mini2' /proc/device-tree/compatible ||
+                       [ "${ALISA_MINI1:-0}" = 1 ]; } &&
                      ! grep -q '|mute-switch ' /sys/kernel/debug/gpio 2>/dev/null; then
                     printf ' gpio-0 (                    |mute-switch         ) in  hi\n' > "$RUNTIME/mute-gpio"
                     export ALICE_MUTE_GPIO_FILE="$RUNTIME/mute-gpio"

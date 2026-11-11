@@ -3,14 +3,28 @@
 Unknown builds on a supported model are installable with a warning. Missing
 firmware files and unsupported models remain errors in every entry point.
 """
+import json
 import re
 
 MAIND='7d431541e2737a94f8499953204dbb1306877e0cf7d36170c4b1a9e19974ba14'
 VQE='fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f'
 BUILDS={
-    'lite2':(('station-lite2','yandex,station-lite2','plum','yandex,prune'),[(MAIND,VQE)]),
+    # One owner-tested Midi; retain the experimental warning pending broader validation.
+    'cucumber':(('yandex,cucumber',),[]),
+    # Lite 2 ships both Plum and Prune boards. Their device trees use the
+    # vendor-qualified base marker alongside a board revision, not bare plum.
+    'lite2':(('station-lite2','yandex,station-lite2','plum','yandex,plum','yandex,prune'),[(MAIND,VQE)]),
     'lite1':(('yandex,station-micro',),[('2dad0ffc61ba73d15ea813b754d7a56866d0477c321dcad9138b8d06e14ddbf1',
                                        'df67c7ad9fb9f2f9c473ba2aaed7663a0e898a2c6622993e65d3b8834a0b3646')]),
+    # Yandex Station Mini 2: same Amlogic AXG platform as Lite 1. The pinned
+    # pair was read from the owner's unit (0.369.1.46.4793643989.20261020.299);
+    # its VQE library is byte-identical to the Lite 2 build.
+    'mini2':(('yandex,station-mini2',),
+             [('7ff114e08d46d48394f9d794f89dc941f3b217bdcd3ff1ef46f1cd80fada6ec1',VQE)]),
+    # Known Mini 3 firmware pair; hash recognition does not validate a full dialog.
+    'bergamot':(('yandex,bergamot','yandex,bergamot-evt1'),
+                [('d9ffda13e603f813ffa0de0f081ebb7b66e73a68fd44b387dadb1ecb2f0b534d',
+                  '9d7b5a8649e06ded729226ed1615802067f73ba50353ca08ae5a76b342fd25bf')]),
     # Yandex Station 2 (yandexmidi): the pinned pair is the firmware the model
     # was validated on (live voice dialog, one station). Any other build stays
     # 'unverified' and installs with the usual warning.
@@ -19,7 +33,8 @@ BUILDS={
                     'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')]),
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
-MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','yandexmidi':'Станция 2','mini1':'Станция Мини 1'}
+MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini1':'Станция Мини 1','mini2':'Станция Мини 2','yandexmidi':'Станция 2',
+             'bergamot':'Станция Мини 3','cucumber':'Станция Миди (экспериментально)'}
 LIGHTING_UNAVAILABLE='Подсветка GPT недоступна для этой модели.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
          'но работа микрофона, звука и голосовых команд не гарантируется.')
@@ -39,10 +54,30 @@ def classify(device_tree,pair,device_type=None):
     model=next((name for name,(markers,_) in BUILDS.items() if tokens.intersection(markers)),None)
     # Mini 1 shares a generic Amlogic device tree with other products.
     # Require the firmware's explicit device type as a second identifier.
-    if model is None and device_type=='yandexmini' and {'amlogic,','axg'} <= tokens:
+    if model is None and device_type=='yandexmini' and _has_axg_marker(device_tree):
         model='mini1'
     present=len(pair)==2 and all(isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) for value in pair)
     known=bool(model in BUILDS and present and tuple(pair) in BUILDS[model][1])
     status='unsupported-model' if not model else 'verified' if known else 'unverified' if present else 'unavailable'
     return {'model':model,'firmware_abi_supported':known,'firmware_files_present':present,
             'firmware_status':status,'warnings':[WARNING] if status=='unverified' else []}
+
+
+def _has_axg_marker(device_tree):
+    return any(marker.strip().lower() in ('amlogic, axg','amlogic,axg')
+               for marker in device_tree.split('\x00'))
+
+
+def inspect_identity(device_tree, pair, read_text):
+    """Only AXG candidates without a known model need Quasar's extra identifier."""
+    report = classify(device_tree, pair)
+    if report['model'] is not None or not _has_axg_marker(device_tree):
+        return report
+    config = read_text('cat /system/vendor/quasar/quasar.cfg 2>/dev/null || true')
+    try:
+        settings = json.loads(config)
+    except (ValueError, TypeError):
+        return report
+    if isinstance(settings, dict):
+        return classify(device_tree, pair, settings.get('deviceType'))
+    return report

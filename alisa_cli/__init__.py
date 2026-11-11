@@ -1,2 +1,2 @@
-"""Mode-separated installer for rooted Station Lite 1, Lite 2 and Station 2."""
-__version__='0.3.4'
+"""Installer for rooted Station Lite 1/2, Mini 2/3, Station 2 and experimental Midi."""
+__version__='0.3.10'

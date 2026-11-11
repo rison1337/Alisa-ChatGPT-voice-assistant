@@ -1,10 +1,10 @@
 """Compact management pages with immediate hints and cached device reads."""
 import time
-from .state import load,STYLE_NAMES
+from .state import load,STYLE_NAMES,LED_SCOPE_NAMES
 from . import ui
 from .firmware import supports_lighting,LIGHTING_UNAVAILABLE,MODEL_NAMES
 
-TITLES={'main':'Нативный режим','settings':'Настройки','account':'Аккаунт ChatGPT',
+TITLES={'main':'Нативный режим','settings':'Настройки','lighting':'Подсветка','account':'Аккаунт ChatGPT',
         'vpn':'VPN / VLESS','service':'Установка и обслуживание','checks':'Проверки','autostart':'Автозапуск','updates':'Обновления'}
 
 def auto_entries(mode,config):
@@ -18,15 +18,27 @@ def entries(mode,page,config=None):
     config=config or {}
     if page=='main':
         values=[('GPT — запустить / остановить',('toggle',None)),('Настройки','@settings'),('Аккаунт ChatGPT','@account')]
-        if mode=='native':values.append(('VPN / VLESS','@vpn'))
+        if mode=='native':
+            from . import devices
+            values.append(('Колонка: '+devices.current_name(),('devices',None)))
+            values.append(('VPN / VLESS','@vpn'))
         values.append(('Установка и обслуживание','@service'))
     elif page=='settings':
         values=[('Голосовые фразы',('settings','phrases'))]
-        if supports_lighting(config.get('model')):values.append(('Подсветка',('settings','led')))
+        if supports_lighting(config.get('model')):values.append(('Подсветка','@lighting' if mode=='native' else ('settings','led')))
         if mode=='native':
-            if supports_lighting(config.get('model')):values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
+            if config.get('model') in ('bergamot','cucumber'):values.append(('Дисплей GPT',('settings','display')))
             values.append(('Голос GPT',('voice',None)))
+            values.append(('STUN: '+('отключён' if config.get('disable_stun',False) else 'включён'),('settings','stun')))
         values+=auto_entries(mode,config)
+    elif page=='lighting':
+        values=[('Цвет и анимация',('settings','led')),
+                ('Когда включать: '+LED_SCOPE_NAMES[config.get('led_scope','speaking')].lower(),('settings','led-scope'))]
+        if config.get('model')=='cucumber':
+            values.append((('[✓]' if config.get('midi_fire',False) else '[ ]')+' Пламя вместо радуги',
+                           ('settings','midi-fire-off' if config.get('midi_fire',False) else 'midi-fire-on')))
+        if config.get('led_scope','speaking')=='speaking':
+            values.append((('[✓]' if config.get('listen_led',False) else '[ ]')+' Подсветка в паузах GPT',('settings','listen-off' if config.get('listen_led',False) else 'listen-on')))
     elif page=='account':values=[('Войти',('login',None)),('Сменить аккаунт',('login','change')),('Выйти из аккаунта',('logout',None))]
     elif page=='vpn':values=[('Запустить VPN',('vpn','start')),('Остановить VPN',('vpn','stop')),
         ('Сервер / подписка',('vpn','configure')),
@@ -42,6 +54,8 @@ def entries(mode,page,config=None):
     elif page=='checks':values=[('Колонка и компоненты',('doctor',None)),('Сеть ChatGPT',('network',None)),('Голосовой ответ',('verify',None))]
     elif page=='autostart':values=auto_entries(mode,config)
     else:raise ValueError('Неизвестная страница')
+    if mode=='native' and page=='service' and config.get('installed'):
+        values.insert(1,('Обновить компоненты колонки',('install','components')))
     return values+[('Другой режим' if page=='main' else 'Назад','back')]
 
 def run(mode,execute,start_page='main'):
@@ -53,16 +67,20 @@ def run(mode,execute,start_page='main'):
         old=previous.get(page)
         if isinstance(old,tuple) and old not in [value for _,value in values]:
             candidates=[value for _,value in values if isinstance(value,tuple) and value[0]==old[0] and
-                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')) or (old[0]=='update' and value[1] in ('ask-on','ask-off')) or (old[0]=='settings' and value[1] in ('listen-on','listen-off')))]
+                        ((old[0]=='autostart' and value[1] in ('on','off')) or (old[0]=='vpn' and str(value[1]).startswith('autostart-')) or (old[0]=='update' and value[1] in ('ask-on','ask-off')) or (old[0]=='settings' and value[1] in ('listen-on','listen-off','midi-fire-on','midi-fire-off')))]
             if candidates:previous[page]=candidates[0]
         endpoint=(configuration.get('host') or 'IP ещё не указан')+':'+str(configuration.get('port') or 2222)
         subtitle=endpoint+'  ·  '+('Установлен' if configuration.get('installed') else 'Требуется установка')
         if configuration.get('model') in MODEL_NAMES:subtitle+='  ·  '+MODEL_NAMES[configuration['model']]
+        if mode=='native':
+            from . import devices
+            note=devices.component_note(configuration)
+            if note:subtitle+='  ·  '+note
         return dict(title=titles[page],items=values,default=previous.get(page),details=results.get(page,''),subtitle=subtitle)
     def inline(choice):
         if isinstance(choice,str):return True
         action,operation=choice
-        return action in ('toggle','help','doctor','network','storage','status','start','stop','verify') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off')) or (action=='update' and operation in ('ask-on','ask-off')) or (action=='settings' and operation in ('listen-on','listen-off'))
+        return action in ('toggle','help','doctor','network','storage','status','start','stop') or (action=='vpn' and operation in ('status','start','stop','disable','autostart-on','autostart-off')) or (action=='autostart' and operation in ('status','on','off')) or (action=='update' and operation in ('ask-on','ask-off')) or (action=='settings' and operation in ('listen-on','listen-off'))
     def location(context):return next(key for key,value in titles.items() if value==context)
     def read_request(context,choice):
         if choice=='back':return None
@@ -81,6 +99,8 @@ def run(mode,execute,start_page='main'):
         if mode=='native' and configuration['vpn'].get('enabled'):text+='\nАвтозапуск VLESS: '+('включён' if configuration['vpn'].get('autostart') else 'выключен')
         return text
     def hint(choice):
+        if choice==('devices',None):return 'Выбрать колонку для управления или добавить новую. Настройки и вход хранятся отдельно. Работающие разговоры не останавливаются.'
+        if choice==('install','components'):return 'Обновить компоненты только выбранной колонки из установленного пакета. Вход, чаты и настройки сохраняются. Программа на ПК и другие колонки не изменяются.'
         if choice=='@updates' or (isinstance(choice,tuple) and choice[0]=='update'):
             from . import __version__
             from .updates import preferences
@@ -108,7 +128,15 @@ def run(mode,execute,start_page='main'):
                      'network':'Проверяю доступность ChatGPT…','storage':'Считаю свободное место…','help':'Открываю описание установки…'}
             return ui.FocusContent(describe(waiting[request[0]],choice),True)
         if choice=='@settings':return ui.FocusContent(phrase_summary()+'\n\nПодсветка: '+led_name()+'\n\n'+auto_summary())
+        if choice==('settings','display'):
+            from .display import preference
+            names={'clock':'Штатные часы','eyes':'Анимированные глаза','matrix':'Матрица цифр'}
+            return ui.FocusContent('Дисплей во время GPT: '+names[preference(configuration)]+'\n\nВыбор применяется со следующего разговора GPT.')
+        if choice in (('settings','midi-fire-on'),('settings','midi-fire-off')):
+            return ui.FocusContent('Красно-оранжевое пламя вместо радуги на кольце и логотипе Миди. Остальные выбранные цвета сохраняются. По умолчанию выключено.')
+        if choice==('settings','stun'):return ui.FocusContent('STUN: '+('отключён' if configuration.get('disable_stun',False) else 'включён')+'\n\nСтандартный режим — STUN включён. При ice_gather_timeout можно попробовать отключить его. Результат зависит от сети. Изменение применяется после перезапуска GPT.')
         if choice==('settings','phrases'):return ui.FocusContent(phrase_summary())
+        if choice=='@lighting' or choice==('settings','led-scope'):return ui.FocusContent('Подсветка: '+led_name()+'\n'+LED_SCOPE_NAMES[configuration.get('led_scope','speaking')]+'\n\nПо умолчанию выбранный эффект включён только во время ответа GPT. Можно также включить его во время прослушивания и ожидания ответа, пока чат открыт. При выключенном микрофоне приоритет остаётся у штатной индикации.')
         if choice==('settings','led'):return ui.FocusContent('Подсветка: '+led_name())
         if choice in (('settings','listen-on'),('settings','listen-off')):return ui.FocusContent('В паузах GPT: '+('включена' if configuration.get('listen_led',False) else 'выключена')+'\n\nГолубая волна, пока чат GPT открыт и ответ не звучит. По умолчанию выключена. Меняется без перезапуска разговора; анимация ответа сохраняется. При цвете «Выключена» вся подсветка GPT остаётся погашенной.')
         if isinstance(choice,tuple) and (choice[0]=='autostart' or (choice[0]=='vpn' and str(choice[1]).startswith('autostart-'))):return ui.FocusContent(auto_summary())
@@ -139,7 +167,8 @@ def run(mode,execute,start_page='main'):
         if choice[0] in ('help','doctor','network','storage','status'):cache[choice]=(time.monotonic(),results[page])
         if choice[0]=='toggle':cache[('status',None)]=(time.monotonic(),results[page])
         if choice[0]=='vpn' and choice[1] in ('start','stop'):cache[('vpn','status')]=(time.monotonic(),results[page])
-        if code==130:return code
+        from .devices import SWITCHED
+        if code in (130,SWITCHED):return code
         return view()
     if ui.interactive():return ui.dashboard(**view(),on_select=choose,inline=inline,on_focus=preview,on_focus_hint=focus)
     while True:

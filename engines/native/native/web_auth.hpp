@@ -1,5 +1,6 @@
 #pragma once
 #include "common.hpp"
+#include "ca_store.hpp"
 #include <curl/curl.h>
 #include <sstream>
 #include <thread>
@@ -59,11 +60,7 @@ inline HttpReply web_request(const std::string &url,const json &auth,
     curl_easy_setopt(curl,CURLOPT_TIMEOUT,40L);curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,8L);
     curl_easy_setopt(curl,CURLOPT_NOSIGNAL,1L);
     if(const char *proxy=getenv("ALISA_PROXY_URL"))curl_easy_setopt(curl,CURLOPT_PROXY,proxy);
-    curl_easy_setopt(curl,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(curl,CURLOPT_SSL_VERIFYHOST,2L);
-    const char *ca=getenv("ALISA_CA_FILE");
-    if(ca)curl_easy_setopt(curl,CURLOPT_CAINFO,ca);
-    else if(fs::exists("/system/vendor/quasar/certs/ca-certificates.crt"))
-        curl_easy_setopt(curl,CURLOPT_CAINFO,"/system/vendor/quasar/certs/ca-certificates.crt");
+    configure_ca(curl);
     curl_easy_setopt(curl,CURLOPT_WRITEFUNCTION,http_body);
     curl_easy_setopt(curl,CURLOPT_WRITEDATA,&reply.body);
     curl_easy_setopt(curl,CURLOPT_NOPROGRESS,0L);

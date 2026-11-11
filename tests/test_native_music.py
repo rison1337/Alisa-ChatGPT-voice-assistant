@@ -44,6 +44,7 @@ def field(key,data):return number(key*8+2)+number(len(data))+data
 
 @unittest.skipUnless(sys.platform=='linux' and shutil.which('clang'),'Linux host C compiler')
 class NativeMusic(unittest.TestCase):
+    wire_format='wrapped'
     @classmethod
     def setUpClass(cls):
         cls.build=tempfile.TemporaryDirectory();cls.library=Path(cls.build.name)/'agent.so'
@@ -60,10 +61,12 @@ class NativeMusic(unittest.TestCase):
         self.process=subprocess.Popen(['/usr/bin/true'],bufsize=0,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
             env={**os.environ,'LD_PRELOAD':str(self.library),'ALICE_NATIVE_AGENT':'1','ALICE_NATIVE_FOCUS':'1',
                  'ALICE_NATIVE_PORT':str(self.server.getsockname()[1]),'ALICE_NATIVE_LOCK':str(root/'lock'),
-                 'ALICE_TTS_GATE_FILE':str(root/'lease'),'ALICE_FOCUS_TEMPLATE':str(template),'ALICE_FOCUS_DIRECTORY':str(root)})
+                 'ALICE_TTS_GATE_FILE':str(root/'lease'),'ALICE_FOCUS_TEMPLATE':str(template),'ALICE_FOCUS_DIRECTORY':str(root),
+                 'ALICE_NATIVE_WIRE_FORMAT':self.wire_format})
         self.addCleanup(self.cleanup)
         self.peer,_=self.server.accept();self.peer.settimeout(1);self.addCleanup(self.peer.close)
-        self.assertEqual(self.message()['event'],'ready')
+        ready=self.message();self.assertEqual(ready['event'],'ready')
+        self.assertEqual(ready['wire_format'],self.wire_format)
 
     def cleanup(self):
         if self.process.poll() is None:
@@ -81,7 +84,7 @@ class NativeMusic(unittest.TestCase):
         return self.message()
 
     def state(self,value):
-        envelope=field(252,number(8)+number(value))+number(253*8)+number(3)
+        envelope=self.envelope(3,number(8)+number(value))
         self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
         deadline=time.monotonic()+2
         while time.monotonic()<deadline:
@@ -96,8 +99,83 @@ class NativeMusic(unittest.TestCase):
 
     def rpc(self):
         envelope=fields(self.exact(int.from_bytes(self.exact(4),'little')))
+        if self.wire_format=='fields':
+            self.assertEqual(set(envelope),{210})
+            return fields(envelope[210])
         self.assertEqual(envelope[253],210)
         return fields(envelope[252])
+
+    def envelope(self,kind,payload):
+        if self.wire_format=='fields':return field(kind,payload)
+        return field(252,payload)+number(253*8)+number(kind)
+
+    def test_focus_event_in_selected_format_grants_only_our_request(self):
+        self.state(0);self.control('CHAT');self.assert_pause()
+        play=fields(self.rpc()[12]);request=fields(play[4])[4]
+        directive=field(4,request)
+        event=field(1,field(1,directive))+field(3,number(8)+number(6)+number(17*8)+number(1))
+        envelope=self.envelope(210,field(7,b'AudioFilePlayerCapability')+field(17,event))
+        self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+        report=self.message();self.assertEqual(report['event'],'focus');self.assertEqual(report['focus_ready'],1)
+        self.assertEqual(self.control('IDLE')['focus_ready'],0)
+        self.assertEqual(self.rpc()[7],b'AudioFilePlayerCapability')
+
+    def test_recognized_command_uses_selected_format_for_queue_clear(self):
+        request=field(1,'открой чат'.encode())+number(16)+number(1)+number(32)+number(1)
+        state=number(8)+number(3)+field(7,b'00000000-0000-4000-8000-000000000042')+field(15,request)
+        envelope=self.envelope(3,state)
+        self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+        self.assertEqual(self.message(),{'event':'command','action':'open'})
+        self.assertEqual(self.rpc()[7],b'AliceCapability')
+        self.assertEqual(self.control('PING')['commands'],1)
+
+    def test_factory_final_commands_do_not_require_retail_request_flag(self):
+        for index,flag in enumerate((None,0)):
+            request=field(1,'открой чат'.encode())+number(16)+number(1)
+            if flag is not None:request+=number(32)+number(flag)
+            identifier=('00000000-0000-4000-8000-%012d'%(index+42)).encode()
+            payload=number(8)+number(3)+field(7,identifier)+field(15,request)
+            envelope=self.envelope(3,payload)
+            self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+            if self.wire_format=='fields':
+                self.assertEqual(self.message(),{'event':'command','action':'open'})
+                self.assertEqual(self.rpc()[7],b'AliceCapability')
+            else:self.assertFalse(select.select([self.process.stdout],[],[],.05)[0])
+            self.assertEqual(self.control('PING')['commands'],index+1 if self.wire_format=='fields' else 0)
+
+    def test_unfinished_or_unidentified_factory_commands_remain_ignored(self):
+        identifier=b'00000000-0000-4000-8000-000000000042'
+        for native_state,final,request_id in ((1,1,identifier),(2,1,identifier),(3,0,identifier),(3,1,b'')):
+            request=field(1,'открой чат'.encode())+number(16)+number(final)
+            payload=number(8)+number(native_state)+field(7,request_id)+field(15,request)
+            envelope=self.envelope(3,payload)
+            self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+            self.assertFalse(select.select([self.process.stdout],[],[],.03)[0])
+            self.assertEqual(self.control('PING')['commands'],0)
+
+    def test_guard_uses_the_selected_format_after_agent_is_killed(self):
+        self.state(0);self.control('CHAT');self.assert_pause()
+        path=fields(self.rpc()[12])[2]
+        self.process.kill();self.process.wait(timeout=3)
+        guard,_=self.server.accept();self.addCleanup(guard.close);guard.settimeout(2)
+        original=self.peer
+        try:
+            self.peer=guard
+            remote=self.rpc();self.assertEqual(remote[7],b'AudioFilePlayerCapability')
+            stop=fields(remote[12]);self.assertEqual(stop[1],1);self.assertEqual(stop[2],path)
+        finally:self.peer=original
+
+    def test_wrong_or_malformed_envelopes_do_not_change_state(self):
+        payload=number(8)+number(3)
+        wrong=field(3,payload) if self.wire_format=='wrapped' else field(252,payload)+number(253*8)+number(3)
+        invalid=self.envelope(3,b'\x08\x80')
+        ambiguous=field(3,payload)+field(252,payload)+number(253*8)+number(3)
+        cases=[wrong,invalid,self.envelope(207,payload)]
+        if self.wire_format=='fields':cases.append(ambiguous)
+        for envelope in cases:
+            self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+            self.assertEqual(self.control('PING')['native_state'],-1)
+        self.state(3)
 
     def assert_pause(self):
         remote=self.rpc();self.assertEqual(remote[7],b'PlaybackControlCapability')
@@ -129,3 +207,7 @@ class NativeMusic(unittest.TestCase):
         for value in (1,3,0):self.state(value)
         self.assertEqual(self.control('PING')['music_pause_requests'],0)
         self.assertFalse(select.select([self.peer],[],[],.05)[0])
+
+
+class NativeFields(NativeMusic):
+    wire_format='fields'

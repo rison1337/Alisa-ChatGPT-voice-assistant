@@ -40,12 +40,13 @@ class VoiceDaemon {
                 changed.wait_for(lock,std::chrono::seconds(1),[&]{return !requests.empty()||ending||stopping;});
                 if(ending||stopping)break;if(requests.empty())continue;
                 request=std::move(requests.front());requests.pop_front();
-                phase="connecting";error.clear();preparing_cancel=false;
+                phase="connecting";error.clear();last_stats=json::object();preparing_cancel=false;
             }
             std::string action=request.value("action",std::string());
             if(action=="close")continue;
             std::thread indicator_reader;
             std::shared_ptr<Child> light;
+            std::shared_ptr<VoiceCall> active;
             try{
                 if(agent&&!agent->acquire())throw std::runtime_error("native_focus_not_ready");
                 auto still_current=[&]{std::lock_guard<std::mutex> lock(mutex);
@@ -70,10 +71,12 @@ class VoiceDaemon {
                 options.conversation_id=entry.value("conversation_id",std::string());
                 options.parent_message_id=entry.value("parent_message_id",std::string());
                 options.voice_session_id=entry.value("voice_session_id",std::string());
-                options.connected=[this]{std::lock_guard<std::mutex> lock(mutex);phase="active";};
+                auto call_generation=request.value("_generation",0UL);
+                options.connected=[this,call_generation]{std::lock_guard<std::mutex> lock(mutex);
+                    if(call_generation==generation&&!stopping&&!ending)phase="active";};
                 std::string id=entry["id"].get<std::string>();
                 options.update=[this,id,account](const json &values){settings.update(id,values,account);};
-                auto active=std::make_shared<VoiceCall>(options);
+                active=std::make_shared<VoiceCall>(options);
                 {std::lock_guard<std::mutex> lock(mutex);
                     if(request.value("_generation",0UL)!=generation)throw std::runtime_error("call_cancelled");
                     call=active;phase="connecting";error.clear();++calls;}
@@ -81,10 +84,19 @@ class VoiceDaemon {
                 {std::lock_guard<std::mutex> lock(mutex);last_stats=result;last_stats.erase("identity");
                     if(result.contains("error"))error=result["error"].get<std::string>();}
             }catch(const std::exception &exc){
-                std::lock_guard<std::mutex> lock(mutex);
                 std::string reason=safe_error(exc);
+                json diagnostic=json::object();
+                if(active){active->stop();diagnostic=active->stats();
+                    diagnostic["success"]=false;diagnostic["error"]=reason;}
+                std::lock_guard<std::mutex> lock(mutex);
+                last_stats=std::move(diagnostic);
                 if(reason!="call_cancelled"&&reason!="https_transport_42")error=reason;
             }
+            // Close an early-failed PeerConnection before returning the device
+            // to Alice; no callbacks from this call should outlive cleanup.
+            if(active)active->stop();
+            {std::lock_guard<std::mutex> lock(mutex);call.reset();}
+            active.reset();
             if(agent)agent->idle();
             bool cue=false;
             {
@@ -135,7 +147,7 @@ public:
         info["agent_connected"]=test_mode||(agent&&agent->connected());
         if(agent){
             std::lock_guard<std::mutex> lock(agent->metadata_mutex);info["native"]=json::object();
-            for(const char *key:{"mode","focus_ready","native_state","commands","recognition_starts","wake_blocks"})
+            for(const char *key:{"mode","focus_ready","native_state","commands","recognition_starts","wake_blocks","wire_format"})
                 if(agent->metadata.contains(key))info["native"][key]=agent->metadata[key];
         }
         info["login_saved"]=fs::exists(state/"web-session.json");

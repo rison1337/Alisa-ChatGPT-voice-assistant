@@ -1,5 +1,17 @@
 import base64,json,re,urllib.request,uuid
-from urllib.parse import urlsplit,parse_qs,unquote,urlencode
+from urllib.parse import urlsplit,parse_qs,unquote,urlencode,quote
+
+LINK_SCHEMES=('vless','hy2','hysteria2','tuic')
+
+def is_proxy_link(source):
+    return isinstance(source,str) and source.strip().split(':',1)[0].lower() in LINK_SCHEMES
+
+def parse_proxy_link(source):
+    scheme=urlsplit(source.strip()).scheme
+    if scheme=='vless':return parse_link(source)
+    if scheme in ('hy2','hysteria2'):return parse_hy2(source)
+    if scheme=='tuic':return parse_tuic(source)
+    raise ValueError('Поддерживаются ссылки VLESS, Hysteria 2 и TUIC')
 
 class SubscriptionNotice(ValueError):pass
 
@@ -21,7 +33,9 @@ def parse_link(link):
         if not 1<=port<=65535 or re.search(r'[\s\x00-\x1f]',server):raise ValueError()
     except (ValueError,TypeError):raise ValueError('Некорректная ссылка VLESS') from None
     if (q.get('encryption') or 'none')!='none':raise ValueError('Неизвестное шифрование VLESS')
-    transport=q.get('type') or 'tcp';security=q.get('security') or 'none'
+    transport=q.get('type') or 'tcp'
+    if transport=='raw':transport='tcp'  # some panels spell plain TCP as "raw"
+    security=q.get('security') or 'none'
     if transport not in ['tcp','ws','grpc','httpupgrade','xhttp']:raise ValueError('Транспорт VLESS пока не поддерживается: '+re.sub('[^a-z0-9]','',transport))
     if security not in ['none','tls','reality']:raise ValueError('Неизвестный режим TLS VLESS')
     result={'type':'vless','tag':'gpt-vless','server':server,'server_port':port,'uuid':identity,'packet_encoding':'xudp'}
@@ -54,6 +68,53 @@ def parse_link(link):
                 raise ValueError('XHTTP extra содержит неподдерживаемые параметры')
         result['_engine']='xray'
         result['transport']={'type':'xhttp','path':q.get('path') or '/','host':q.get('host',''),'mode':mode,'extra':extra}
+    name=label(unquote(u.fragment))
+    check_notice(name)
+    if name:result['_name']=name
+    return result
+
+def parse_hy2(link):
+    # Hysteria 2: hysteria2://password@host:port?sni=...&obfs=salamander&obfs-password=...
+    try:
+        u=urlsplit(link.strip());q={k:v[-1] for k,v in parse_qs(u.query,keep_blank_values=True).items()}
+        if u.scheme not in ('hy2','hysteria2') or not u.hostname or not u.username:raise ValueError()
+        # Hysteria userpass is one credential, including the literal colon.
+        password=unquote(u.netloc.rsplit('@',1)[0]);port=u.port or 443;server=u.hostname
+        if not 1<=port<=65535 or re.search(r'[\s\x00-\x1f]',server):raise ValueError()
+    except (ValueError,TypeError):raise ValueError('Некорректная ссылка Hysteria 2') from None
+    if q.get('insecure','0').lower() in ['1','true']:raise ValueError('Ссылка просит отключить проверку TLS; исправьте настройки сервера')
+    result={'type':'hysteria2','tag':'gpt-vless','server':server,'server_port':port,'password':password,
+            'tls':{'enabled':True,'server_name':q.get('sni') or q.get('peer') or server}}
+    if q.get('alpn'):result['tls']['alpn']=[x for x in q['alpn'].split(',') if x]
+    obfs=q.get('obfs')
+    if obfs:
+        if obfs!='salamander':raise ValueError('Неизвестное маскирование Hysteria 2: '+re.sub('[^a-z0-9]','',obfs))
+        result['obfs']={'type':'salamander','password':q.get('obfs-password','')}
+    name=label(unquote(u.fragment))
+    check_notice(name)
+    if name:result['_name']=name
+    return result
+
+def parse_tuic(link):
+    # TUIC: tuic://uuid:password@host:port?sni=...&congestion_control=bbr&alpn=h3
+    try:
+        u=urlsplit(link.strip());q={k:v[-1] for k,v in parse_qs(u.query,keep_blank_values=True).items()}
+        if u.scheme!='tuic' or not u.hostname or not u.username:raise ValueError()
+        identity=str(uuid.UUID(unquote(u.username)));password=unquote(u.password or '')
+        port=u.port or 443;server=u.hostname
+        if not 1<=port<=65535 or re.search(r'[\s\x00-\x1f]',server):raise ValueError()
+    except (ValueError,TypeError):raise ValueError('Некорректная ссылка TUIC') from None
+    if not password:raise ValueError('В ссылке TUIC нет пароля')
+    if q.get('allow_insecure','0').lower() in ['1','true']:raise ValueError('Ссылка просит отключить проверку TLS; исправьте настройки сервера')
+    congestion=q.get('congestion_control') or 'bbr'
+    if congestion not in ['bbr','cubic','new_reno']:raise ValueError('Неизвестный алгоритм управления перегрузкой TUIC')
+    relay=q.get('udp_relay_mode','')
+    if relay and relay not in ['native','quic']:raise ValueError('Неизвестный режим UDP TUIC')
+    result={'type':'tuic','tag':'gpt-vless','server':server,'server_port':port,'uuid':identity,'password':password,
+            'congestion_control':congestion,
+            'tls':{'enabled':True,'server_name':q.get('sni') or server}}
+    if relay:result['udp_relay_mode']=relay
+    if q.get('alpn'):result['tls']['alpn']=[x for x in q['alpn'].split(',') if x]
     name=label(unquote(u.fragment))
     check_notice(name)
     if name:result['_name']=name
@@ -106,6 +167,44 @@ def clash_outbound(item):
     if item.get('dialer-proxy'):raise ValueError('Цепочка прокси не поддерживается')
     return from_fields(item['server'],item['port'],item['uuid'],q,item.get('name',''))
 
+def quic_outbound(item,kind):
+    """Rebuild independent QUIC servers; never import routing or proxy chains."""
+    if item.get('detour') or item.get('dialer-proxy') or item.get('proxySettings'):
+        raise ValueError('Цепочка прокси не поддерживается')
+    protocol=item['type']
+    server=item['server'];port=item['port'] if kind=='clash' else item['server_port']
+    if not isinstance(server,str) or not server or re.search(r'[^a-zA-Z0-9.:%_-]',server):
+        raise ValueError('Некорректный адрес сервера')
+    if not isinstance(port,int) or isinstance(port,bool) or not 1<=port<=65535:
+        raise ValueError('Некорректный порт сервера')
+    password=item.get('password')
+    if not isinstance(password,str) or not password:raise ValueError('В сервере нет пароля')
+    tls={} if kind=='clash' else item.get('tls') or {}
+    if kind!='clash' and tls.get('enabled') is not True:raise ValueError('Для QUIC нужен TLS')
+    insecure=item.get('skip-cert-verify',False) if kind=='clash' else tls.get('insecure',False)
+    if insecure not in (False,None):raise ValueError('Отключение проверки TLS не поддерживается')
+    alpn=item.get('alpn') if kind=='clash' else tls.get('alpn')
+    if alpn is not None and (not isinstance(alpn,list) or not all(isinstance(x,str) and x and ',' not in x for x in alpn)):
+        raise ValueError('Некорректный ALPN')
+    query={'sni':(item.get('sni') or item.get('servername')) if kind=='clash' else tls.get('server_name')}
+    if alpn:query['alpn']=','.join(alpn)
+    if protocol in ('hy2','hysteria2'):
+        if item.get('ports') or item.get('server_ports'):raise ValueError('Диапазон портов пока не поддерживается')
+        obfs=item.get('obfs')
+        if obfs:
+            if kind=='clash':query.update(obfs=obfs,**{'obfs-password':item.get('obfs-password','')})
+            else:query.update(obfs=obfs['type'],**{'obfs-password':obfs.get('password','')})
+        user=quote(password,safe='');scheme='hysteria2'
+    else:
+        user=quote(str(uuid.UUID(item['uuid'])),safe='')+':'+quote(password,safe='');scheme='tuic'
+        query.update(congestion_control=item.get('congestion-controller' if kind=='clash' else 'congestion_control'),
+                     udp_relay_mode=item.get('udp-relay-mode' if kind=='clash' else 'udp_relay_mode'))
+    host='['+server+']' if ':' in server else server
+    result=parse_proxy_link(scheme+'://'+user+'@'+host+':'+str(port)+'?'+urlencode({k:v for k,v in query.items() if v is not None}))
+    name=item.get('name' if kind=='clash' else 'tag','');check_notice(name)
+    if name:result['_name']=label(name)
+    return result
+
 def structured(value):
     configs=value if isinstance(value,list) else [value];result=[];bad=0
     if len(configs)>256:raise ValueError('В подписке больше 256 конфигураций')
@@ -122,9 +221,10 @@ def structured(value):
             if not isinstance(item,dict):bad+=1;continue
             protocol=item.get('protocol') or item.get('type')
             if protocol in ('freedom','blackhole','direct','block','dns'):continue
-            if protocol!='vless':bad+=1;continue
+            if protocol not in ('vless','hy2','hysteria2','tuic'):bad+=1;continue
             try:
-                if kind=='clash':result.append(clash_outbound(item))
+                if protocol!='vless':result.append(quic_outbound(item,kind))
+                elif kind=='clash':result.append(clash_outbound(item))
                 elif 'protocol' in item:result.extend(xray_outbound(item,config.get('remarks') or item.get('tag','')))
                 else:
                     # sing-box JSON: rebuild fields rather than importing routing,
@@ -143,25 +243,26 @@ def structured(value):
 def subscription(text):
     if len(text)>2*1024*1024:raise ValueError('Подписка слишком большая')
     text=text.strip()
-    if not text.startswith('vless://'):
+    if not is_proxy_link(text):
         try:text=base64.b64decode(re.sub(r'\s','',text)+'='*(-len(re.sub(r'\s','',text))%4),altchars=b'-_',validate=True).decode()
         except (ValueError,UnicodeError):pass
     if text.startswith(('[','{')):
         try:result,rejected=structured(json.loads(text))
         except (json.JSONDecodeError,RecursionError):raise ValueError('Некорректный JSON подписки') from None
-        if not result:raise ValueError('В JSON нет поддерживаемых независимых серверов VLESS')
+        if not result:raise ValueError('В JSON нет поддерживаемых независимых серверов VLESS/Hysteria 2/TUIC')
         return result,rejected
     if re.search(r'^proxies\s*:',text,re.M):
         from ._vendor import yaml
         try:result,rejected=structured(yaml.safe_load(text))
         except (yaml.YAMLError,RecursionError):raise ValueError('Некорректный YAML подписки') from None
-        if not result:raise ValueError('В YAML нет поддерживаемых серверов VLESS')
+        if not result:raise ValueError('В YAML нет поддерживаемых серверов VLESS/Hysteria 2/TUIC')
         return result,rejected
-    links=[x.strip() for x in text.splitlines() if x.strip().startswith('vless://')]
-    if not links:raise ValueError('Нет ссылок VLESS: поддерживаются текстовые и Base64-подписки')
+    links=[x.strip() for x in text.splitlines() if is_proxy_link(x)]
+    if not links:raise ValueError('Нет ссылок VLESS/Hysteria 2/TUIC: поддерживаются текстовые и Base64-подписки')
     result=[];rejected=0
     for link in links[:256]:
-        try:result.append(parse_link(link))
+        try:
+            result.append(parse_proxy_link(link))
         except SubscriptionNotice:raise
         except ValueError:rejected+=1
     if not result:raise ValueError('Все серверы подписки используют неподдерживаемые параметры')
@@ -190,6 +291,27 @@ def core_config(outbound):
                    'auto_route':False,'mtu':1400,'stack':'gvisor'},
                   {'type':'socks','tag':'gpt-socks','listen':'127.0.0.1','listen_port':18081}],
       'outbounds':[{k:v for k,v in outbound.items() if not k.startswith('_')}],'route':{'final':'gpt-vless','auto_detect_interface':True}}
+
+# Public "no content" endpoint: request latency through a server is the honest
+# measure of its speed; ping (ICMP) says nothing about the proxied path.
+PROBE_URL='https://www.gstatic.com/generate_204'
+
+def auto_config(nodes,url=None):
+    # One outbound per server plus a urltest group tagged like the single
+    # outbound used to be, so routes and health checks stay unchanged.
+    items=[];tags=[]
+    for index,item in enumerate(nodes):
+        node={k:v for k,v in item.items() if not k.startswith('_')}
+        node['tag']='gpt-node-'+str(index)
+        tags.append(node['tag']);items.append(node)
+    if not tags:raise ValueError('Нет серверов для автоматического выбора')
+    items.append({'type':'urltest','tag':'gpt-vless','outbounds':tags,'url':url or PROBE_URL,
+                  'interval':'3m','tolerance':50})
+    return {'log':{'level':'warn','timestamp':True},
+      'inbounds':[{'type':'tun','tag':'gpt-tun','interface_name':'alisa-gpt','address':['172.31.254.1/30','fdfe:4150::1/126'],
+                   'auto_route':False,'mtu':1400,'stack':'gvisor'},
+                  {'type':'socks','tag':'gpt-socks','listen':'127.0.0.1','listen_port':18081}],
+      'outbounds':items,'route':{'final':'gpt-vless','auto_detect_interface':True}}
 
 def xray_config(outbound):
     transport=outbound.get('transport',{});tls=outbound.get('tls',{})

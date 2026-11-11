@@ -4,6 +4,7 @@ Only the allowlisted application is replaced. State, browser profiles and all
 previous/unknown files stay outside the candidate and are never deleted here.
 This module deliberately uses only the Python standard library.
 """
+import contextlib
 import hashlib
 import json
 import os
@@ -11,6 +12,25 @@ from pathlib import Path, PurePosixPath
 import shutil
 import tempfile
 import time
+
+
+@contextlib.contextmanager
+def exclusive_lock(path,message):
+    """A short-lived OS lock; process exit releases it without stale PID files."""
+    with os.fdopen(os.open(path,os.O_CREAT|os.O_RDWR,0o600),'r+b') as lock:
+        try:
+            if os.name=='nt':
+                import msvcrt
+                msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError:raise RuntimeError(message) from None
+        try:yield
+        finally:
+            if os.name=='nt':
+                lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
+            else:fcntl.flock(lock.fileno(),fcntl.LOCK_UN)
 
 FORMATS = {
     'linux-x86_64': ('package-manifest.json', 'alisa-voice'),

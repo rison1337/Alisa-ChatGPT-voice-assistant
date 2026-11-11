@@ -5,7 +5,7 @@ https://github.com/klockky/spotiya/blob/main/src/voice.rs
 """
 import base64
 from uuid import uuid4
-from bridge import ssh
+from bridge import ssh, socat_command
 
 
 def varint(value):
@@ -105,7 +105,7 @@ def pause_frame():
 def send_frame(host, frame):
     encoded = base64.b64encode(frame).decode()
     ssh(host, f"printf '%s' '{encoded}' | base64 -d | "
-        'socat -u STDIN TCP:127.0.0.1:9875,connect-timeout=2', timeout=6)
+        f'{socat_command(host)} -u STDIN TCP:127.0.0.1:9875,connect-timeout=2', timeout=6)
 
 
 def cancel_alice(host):
