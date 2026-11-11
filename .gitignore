@@ -8,6 +8,8 @@ __pycache__/
 /engines/native/build/
 /engines/native/research/
 /engines/native/toolchains/
+/engines/native/station/libasound.so.2
+/engines/native/station/mini1-volume-probe
 **/browser-profile/
 **/state/
 **/backups/

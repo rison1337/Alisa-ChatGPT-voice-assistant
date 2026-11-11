@@ -3,6 +3,7 @@
 Unknown builds on a supported model are installable with a warning. Missing
 firmware files and unsupported models remain errors in every entry point.
 """
+import json
 import re
 
 MAIND='7d431541e2737a94f8499953204dbb1306877e0cf7d36170c4b1a9e19974ba14'
@@ -32,7 +33,7 @@ BUILDS={
                     'e3f80b79cd5b7f9422b790b3fe81cc41883e1c07914e6b474f4fd9313e3b84af')]),
 }
 ARCHITECTURES=('aarch64','armv7l','armv8l','arm')
-MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini2':'Станция Мини 2','yandexmidi':'Станция 2',
+MODEL_NAMES={'lite1':'Станция Лайт 1','lite2':'Станция Лайт 2','mini1':'Станция Мини 1','mini2':'Станция Мини 2','yandexmidi':'Станция 2',
              'bergamot':'Станция Мини 3','cucumber':'Станция Миди (экспериментально)'}
 LIGHTING_UNAVAILABLE='Подсветка GPT недоступна для этой модели.'
 WARNING=('Эта сборка прошивки ещё не проверена. Установка разрешена, '
@@ -40,19 +41,43 @@ WARNING=('Эта сборка прошивки ещё не проверена. �
 
 
 def supports_lighting(model):
-    return model is None or model in BUILDS
+    return model is None or model in BUILDS and model!='mini1'
 
 
 def apply_model(config,model):
-    if model not in BUILDS:return
+    if model not in BUILDS and model!='mini1':return
     config['model']=model
 
 
-def classify(device_tree,pair):
+def classify(device_tree,pair,device_type=None):
     tokens=set(re.split(r'[\x00\s]+',device_tree.lower()))
     model=next((name for name,(markers,_) in BUILDS.items() if tokens.intersection(markers)),None)
+    # Mini 1 shares a generic Amlogic device tree with other products.
+    # Require the firmware's explicit device type as a second identifier.
+    if model is None and device_type=='yandexmini' and _has_axg_marker(device_tree):
+        model='mini1'
     present=len(pair)==2 and all(isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) for value in pair)
-    known=bool(model and present and tuple(pair) in BUILDS[model][1])
+    known=bool(model in BUILDS and present and tuple(pair) in BUILDS[model][1])
     status='unsupported-model' if not model else 'verified' if known else 'unverified' if present else 'unavailable'
     return {'model':model,'firmware_abi_supported':known,'firmware_files_present':present,
             'firmware_status':status,'warnings':[WARNING] if status=='unverified' else []}
+
+
+def _has_axg_marker(device_tree):
+    return any(marker.strip().lower() in ('amlogic, axg','amlogic,axg')
+               for marker in device_tree.split('\x00'))
+
+
+def inspect_identity(device_tree, pair, read_text):
+    """Only AXG candidates without a known model need Quasar's extra identifier."""
+    report = classify(device_tree, pair)
+    if report['model'] is not None or not _has_axg_marker(device_tree):
+        return report
+    config = read_text('cat /system/vendor/quasar/quasar.cfg 2>/dev/null || true')
+    try:
+        settings = json.loads(config)
+    except (ValueError, TypeError):
+        return report
+    if isinstance(settings, dict):
+        return classify(device_tree, pair, settings.get('deviceType'))
+    return report

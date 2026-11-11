@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "id": "local-luna-boot",
+  "version": "1.0.1",
+  "api": 2,
+  "engine": "native",
+  "title": {"ru": "Автозапуск голосового чата", "en": "Voice chat startup"},
+  "description": {"ru": "Запускает установленную Luna на порту 8100", "en": "Starts installed Luna on port 8100"},
+  "author": "Local",
+  "permissions": ["system.full-access", "log.write"],
+  "capabilities": [],
+  "runtime_storage_bytes": 0,
+  "module_sha256": "b07aa40bbfc9538712c5e8311dba5e73048e897edb90aa252e6c3862974b776a",
+  "config": []
+}

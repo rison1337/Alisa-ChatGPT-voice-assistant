@@ -7,6 +7,7 @@
 #include <thread>
 #include <vector>
 #include <cstring>
+#include <cstdlib>
 #include <signal.h>
 
 extern char **environ;
@@ -58,12 +59,16 @@ class StationAgent {
     Child child;std::thread reader,heartbeat;std::atomic<bool> ending{false};
     std::mutex mutex;std::condition_variable changed;
     std::atomic<bool> ready{false},focus{false},speaking{false};
+    bool focus_required=true;
     std::function<void(const json &)> callback;
 public:
     json metadata=json::object();std::mutex metadata_mutex;
     StationAgent(const fs::path &base,std::function<void(const json &)> handler):callback(std::move(handler)){
-        child.start({"aplay","--version","--alice-native-agent",(base/"native_agent.so").string()},
-            {"LD_PRELOAD="+(base/"native_agent.so").string(),"ALICE_NATIVE_AGENT=1","ALICE_NATIVE_FOCUS=1","ALISA_COMMANDS_FILE="+(base/"commands.txt").string(),
+        const char *donor=std::getenv("ALISA_AGENT_DONOR");
+        const char *disable_focus=std::getenv("ALISA_DISABLE_NATIVE_FOCUS");
+        focus_required=!(disable_focus&&std::strcmp(disable_focus,"1")==0);
+        child.start({donor&&*donor?donor:"aplay","--version","--alice-native-agent",(base/"native_agent.so").string()},
+            {"LD_PRELOAD="+(base/"native_agent.so").string(),"ALICE_NATIVE_AGENT=1","ALICE_NATIVE_FOCUS="+std::string(focus_required?"1":"0"),"ALISA_COMMANDS_FILE="+(base/"commands.txt").string(),
              "ALICE_TTS_GATE_FILE="+(runtime_directory/"tts.lease").string(),"ALICE_NATIVE_LOCK="+(runtime_directory/"native-agent.lock").string(),
              "ALICE_FOCUS_TEMPLATE="+(runtime_directory/"focus-0.wav").string(),"ALICE_FOCUS_DIRECTORY="+runtime_directory.string()});
         int readfd=fcntl(child.output,F_DUPFD_CLOEXEC,3);
@@ -94,6 +99,7 @@ public:
     bool connected()const{return ready;}
     bool acquire(){
         if(!ready)return false;focus=false;child.send("CHAT\n");
+        if(!focus_required)return true;
         std::unique_lock<std::mutex> lock(mutex);
         return changed.wait_for(lock,std::chrono::seconds(5),[&]{return focus||!ready||stopping;})&&focus;
     }

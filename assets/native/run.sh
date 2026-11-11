@@ -27,7 +27,10 @@ case "${1:-}" in
                 esac
             done
         fi
-        nohup sh "$BASE/run.sh" monitor >"$RUNTIME/daemon.log" 2>&1 </dev/null &
+        # ADB and some Dropbear shells send SIGHUP to their background job
+        # when the connection closes. A separate session keeps the runtime
+        # alive after the launcher command returns.
+        nohup setsid sh "$BASE/run.sh" monitor >"$RUNTIME/daemon.log" 2>&1 </dev/null &
         echo $! > "$RUNTIME/monitor.pid"
         echo 'Standalone runtime is starting'
         ;;
@@ -59,6 +62,17 @@ case "${1:-}" in
         "$BASE/profile.sh" bridge
         (
             if [ -r "$BASE/runtime.env" ]; then . "$BASE/runtime.env"; fi
+            if tr '\000' '\n' < /proc/device-tree/compatible | grep -Eq '^amlogic,[[:space:]]*axg$' &&
+               grep -Eq '"deviceType"[[:space:]]*:[[:space:]]*"yandexmini"' /system/vendor/quasar/quasar.cfg; then
+                export ALISA_MINI1=1
+                export ALISA_AGENT_DONOR=/bin/true
+                # Explicit Mini 1 workarounds: focus protocol and STUN were not usable.
+                export ALISA_DISABLE_NATIVE_FOCUS=1
+                export ALISA_DISABLE_STUN=1
+                export LD_LIBRARY_PATH="$BASE/volume-libs:/system/vendor/quasar/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                export ALISA_PCM_DEVICE=plughw:0,0
+                export ALISA_VOLUME_FILE=/data/quasar/last_vendor_volume
+            fi
             # If IPv4 is available, avoid dual-stack STUN delays. Bind the
             # IPv4 wildcard, not today's interface address: each new ICE agent
             # then gathers current interfaces after Wi-Fi/DHCP changes. Keep
@@ -81,7 +95,8 @@ case "${1:-}" in
                 if tr '\000' '\n' < /proc/device-tree/compatible | grep -Eq '^(yandex,station-midi|yandexmidi|station-midi)$'; then
                     export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }$BASE/mute_gpio.so"
                 elif { grep -Fq 'yandex,station-micro' /proc/device-tree/compatible ||
-                       grep -Fq 'yandex,station-mini2' /proc/device-tree/compatible; } &&
+                       grep -Fq 'yandex,station-mini2' /proc/device-tree/compatible ||
+                       [ "${ALISA_MINI1:-0}" = 1 ]; } &&
                      ! grep -q '|mute-switch ' /sys/kernel/debug/gpio 2>/dev/null; then
                     printf ' gpio-0 (                    |mute-switch         ) in  hi\n' > "$RUNTIME/mute-gpio"
                     export ALICE_MUTE_GPIO_FILE="$RUNTIME/mute-gpio"

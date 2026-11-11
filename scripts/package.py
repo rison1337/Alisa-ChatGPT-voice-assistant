@@ -7,6 +7,7 @@ NATIVE=ROOT/'engines/native'
 def main():
     target=ROOT/'assets/native';target.mkdir(parents=True,exist_ok=True)
     items={'bin/alisa-standalone':NATIVE/'build/client/alisa-standalone'}
+    items['volume-libs/libasound.so.2']=NATIVE/'station/libasound.so.2'
     for name in ['native_agent','vqe_tap','tts_gate','mute_gpio']:items[name+'.so']=NATIVE/'build'/(name+'.so')
     for name in ['run.sh','profile.sh','indicator.sh','clock-eyes.sh','clock-display.sh','clock-isolation.sh','midi-clock.sh']:items[name]=NATIVE/'station'/name
     items['mark.so']=ROOT/'build/mark.so'
@@ -23,7 +24,7 @@ def main():
     with wave.open(str(target/'focus-0.wav'),'wb') as output:
         output.setnchannels(1);output.setsampwidth(2);output.setframerate(16000);output.writeframes(bytes(16000*2*12))
     hashes={str(p.relative_to(target)):hashlib.sha256(p.read_bytes()).hexdigest() for p in target.rglob('*') if p.is_file() and p.name!='manifest.json'}
-    manifest={'schema':1,'model':'plum+micro+mini2+yandexmidi+bergamot+cucumber','architecture':'armhf','audio_engine':'WebRTC NetEq','revision':11,'files':hashes}
+    manifest={'schema':1,'model':'plum+micro+mini2+yandexmidi+bergamot+cucumber+mini1','architecture':'armhf','audio_engine':'WebRTC NetEq','revision':11,'files':hashes}
     (target/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print('Native artifact manifest:',len(hashes),'files; no credentials included.')
 if __name__=='__main__':main()

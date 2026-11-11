@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build pinned ARMhf/glibc-2.28 dependencies; install only into build/prefix."""
+"""Build pinned ARMhf/glibc-2.23 dependencies; install only into build/prefix."""
 import argparse
 import os
 from pathlib import Path
@@ -27,7 +27,7 @@ def main():
     for name,kind in [('cc','cc'),('cxx','c++')]:
         path=BUILD/f'arm-{name}'
         path.write_text('#!/bin/sh\nexec '+shlex.quote(str(zig))+' '+kind+
-                        ' -target arm-linux-gnueabihf.2.28 -mcpu=cortex_a53 "$@"\n')
+                        ' -target arm-linux-gnueabihf.2.23 -mcpu=cortex_a53 "$@"\n')
         path.chmod(0o700)
     toolchain=BUILD/'toolchain.cmake'
     toolchain.write_text(f'''set(CMAKE_SYSTEM_NAME Linux)
