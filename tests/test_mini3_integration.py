@@ -30,7 +30,7 @@ class Mini3(unittest.TestCase):
         value=self.config(mode)
         text='\n'.join(['0',arch,'yandex,bergamot-evt1\0yandex,bergamot\0amlogic, axg\0',
             pair[0]+'  /system/vendor/quasar/maind',pair[1]+'  /system/vendor/quasar/libs/libyandex_evil.so',
-            '/dev/data 200000 10000 190000 5% /data','/usr/bin/aplay','/bin/base64','/bin/sha256sum','/bin/socat'])
+            '/dev/data 200000 10000 190000 5% /data','/usr/bin/aplay','/bin/base64','/bin/sha256sum','/bin/socat','/bin/setsid'])
         with patch.object(doctor.Station,'text',return_value=text),\
              patch.object(doctor.shutil,'which',return_value='/bin/tool'),\
              patch('alisa_cli.windows.missing',return_value=[]):

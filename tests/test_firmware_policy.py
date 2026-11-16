@@ -22,7 +22,7 @@ class FirmwarePolicy(unittest.TestCase):
         response='\n'.join(['0','aarch64',model+'\0amlogic,axg\0',
             pair[0]+'  /system/vendor/quasar/maind',pair[1]+'  /system/vendor/quasar/libs/libyandex_evil.so',
             '/dev/ubi1_0 89568 19408 65548 23% /data',
-            '/bin/aplay','/bin/base64','/bin/sha256sum','/bin/socat',
+            '/bin/aplay','/bin/base64','/bin/sha256sum','/bin/socat','/bin/setsid',
             'ALISA_FIRMWARE_VERSION=0.372.1.13.4794666714.20261021.136'])
         host=patch.object(doctor.sys,'platform','linux') if mode=='bridge' else contextlib.nullcontext()
         with host,patch('alisa_cli.windows.missing',return_value=[]), \

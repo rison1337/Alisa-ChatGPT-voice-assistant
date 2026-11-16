@@ -10,7 +10,7 @@ def windows_chromium():
 
 def inspect(config):
     s=Station(config)
-    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay base64 sha256sum ip; do command -v "$x" || true; done; command -v socat || command -v /data/opt/entware/bin/socat || true; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
+    script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay base64 sha256sum ip setsid; do command -v "$x" || true; done; command -v socat || command -v /data/opt/entware/bin/socat || true; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
     lines=s.text(script).splitlines()
     if len(lines)<3:raise RuntimeError('Колонка вернула неполный ответ SSH. Повторите проверку подключения.')
     root=lines[0].strip()=='0'
@@ -37,7 +37,7 @@ def inspect(config):
         if len(fields)>=6 and fields[1].isdigit() and fields[3].isdigit():
             try:available=int(fields[3])
             except ValueError:pass
-    needed=(['aplay','base64'] if model!='mini1' else [])+['sha256sum']+(['socat'] if config['mode']=='bridge' else [])
+    needed=(['aplay','base64'] if model!='mini1' else [])+['sha256sum']+(['socat'] if config['mode']=='bridge' else ['setsid'])
     missing_remote=[name for name in needed if not any(x.endswith('/'+name) for x in lines)]
     version=next((line.partition('=')[2].strip() for line in lines if line.startswith('ALISA_FIRMWARE_VERSION=')),None)
     return {'ssh':True,'root':root,'plum':compatible,'mode_supported':mode_supported,**firmware,'architecture':lines[1].strip(),

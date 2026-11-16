@@ -11,7 +11,7 @@ PINNED=('9ad1476ee37df3e401a8426df7710f8f3d2d0695e01d0b949d99a5a8b562a4d2',
 MINI2=('7ff114e08d46d48394f9d794f89dc941f3b217bdcd3ff1ef46f1cd80fada6ec1',
       'fa7ad1544fe9ddfccedcf15acc031768345b0b8c7333bc1c0b47bc476dd4152f')
 
-def output(compatible,maind,vqe,tools=('aplay','base64','sha256sum')):
+def output(compatible,maind,vqe,tools=('aplay','base64','sha256sum','setsid')):
  return '\n'.join(['0','armv7l',compatible+'\x00amlogic, axg\x00',
   maind+'  /system/vendor/quasar/maind',vqe+'  /system/vendor/quasar/libs/libyandex_evil.so',
   'Filesystem 1024-blocks Used Available Capacity Mounted on','/dev/ubi1_0 89568 19408 65548 23% /bkupgrade',
@@ -87,7 +87,7 @@ class Models(unittest.TestCase):
  def test_mini1_native_with_no_aplay_is_recognized_but_unverified(self):
   pair=('255d97e7199f05b5ef09cbd28dfedc35b2050e75db5b40d1546a9cb999602eda',
         '23eb591fe3397a2e3e9d58ff2bc846be541a1a2f0f8cfd957abbc2d674ea1da1')
-  response=output('amlogic, axg',*pair,tools=('sha256sum',))
+  response=output('amlogic, axg',*pair,tools=('sha256sum','setsid'))
   c=state.defaults('native');c['host']='192.0.2.10'
   def reply(command):
    return '{"other":"value","deviceType":"yandexmini"}' if 'quasar.cfg' in command else response
@@ -165,7 +165,7 @@ class Models(unittest.TestCase):
   self.assertEqual(r['station_missing'],[]);self.assertTrue(r['ok'])
 
  def test_windows_accepts_mini2_native_but_requires_a_linux_audio_backend_for_bridge(self):
-  text=output('yandex,station-mini2',*MINI2,tools=('aplay','base64','sha256sum','socat'))
+  text=output('yandex,station-mini2',*MINI2,tools=('aplay','base64','sha256sum','socat','setsid'))
   with patch('alisa_cli.windows.missing',return_value=[]):
    self.assertTrue(self.check('native',text,platform='win32')['ok'])
    bridge=self.check('bridge',text,platform='win32')

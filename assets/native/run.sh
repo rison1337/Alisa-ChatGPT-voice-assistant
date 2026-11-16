@@ -15,24 +15,60 @@ owned_monitor() {
     case "$task_monitor_command" in *"$BASE/run.sh monitor"*) return 0 ;; *) return 1 ;; esac
 }
 
+monitor_ready() {
+    owned_monitor || return 1
+    [ -r "$RUNTIME/monitor.ready" ] || return 1
+    [ "$(cat "$RUNTIME/monitor.ready")" = "$task_monitor_pid" ]
+}
+
 case "${1:-}" in
     start)
-        if owned_monitor; then echo 'Standalone runtime is already started'; exit 0; fi
-        # Avoid stealing the working PC bridge's Quasar profile.
-        if pidof quasar_launcher2 >/dev/null; then
-            for task_launcher_pid in $(pidof quasar_launcher2); do
-                task_launcher_command=$(tr '\000' ' ' < "/proc/$task_launcher_pid/cmdline")
-                case "$task_launcher_command" in
-                    *'/data/opt/alice-voice/'*) echo 'Stop the PC bridge first' >&2; exit 1 ;;
-                esac
-            done
+        if monitor_ready; then echo 'Standalone runtime is already started'; exit 0; fi
+        if owned_monitor; then
+            task_start_pid=$task_monitor_pid
+        else
+            # Fail before touching the active Quasar profile or creating a PID file.
+            if ! command -v setsid >/dev/null 2>&1; then
+                echo 'Standalone startup requires setsid; no runtime was started' >&2
+                exit 1
+            fi
+            # Avoid stealing the working PC bridge's Quasar profile.
+            if pidof quasar_launcher2 >/dev/null; then
+                for task_launcher_pid in $(pidof quasar_launcher2); do
+                    task_launcher_command=$(tr '\000' ' ' < "/proc/$task_launcher_pid/cmdline")
+                    case "$task_launcher_command" in
+                        *'/data/opt/alice-voice/'*) echo 'Stop the PC bridge first' >&2; exit 1 ;;
+                    esac
+                done
+            fi
+            # ADB and some Dropbear shells send SIGHUP to their background job
+            # when the connection closes. A separate session keeps the runtime
+            # alive after the launcher command returns.
+            rm -f "$RUNTIME/monitor.ready"
+            nohup setsid sh "$BASE/run.sh" monitor >"$RUNTIME/daemon.log" 2>&1 </dev/null &
+            task_start_pid=$!
+            echo "$task_start_pid" > "$RUNTIME/monitor.pid"
         fi
-        # ADB and some Dropbear shells send SIGHUP to their background job
-        # when the connection closes. A separate session keeps the runtime
-        # alive after the launcher command returns.
-        nohup setsid sh "$BASE/run.sh" monitor >"$RUNTIME/daemon.log" 2>&1 </dev/null &
-        echo $! > "$RUNTIME/monitor.pid"
-        echo 'Standalone runtime is starting'
+        # The detached process may fail during exec, profile switching or client
+        # startup. Only this monitor's readiness acknowledgement means success.
+        task_wait=0
+        while [ "$task_wait" -lt 90 ]; do
+            if monitor_ready; then echo 'Standalone runtime ready'; exit 0; fi
+            if ! kill -0 "$task_start_pid" 2>/dev/null; then
+                wait "$task_start_pid" 2>/dev/null || true
+                if [ "$(cat "$RUNTIME/monitor.pid" 2>/dev/null || true)" = "$task_start_pid" ]; then
+                    rm -f "$RUNTIME/monitor.pid" "$RUNTIME/monitor.ready"
+                fi
+                echo 'Standalone startup failed; inspect daemon.log' >&2
+                exit 1
+            fi
+            sleep .5; task_wait=$((task_wait + 1))
+        done
+        if owned_monitor && [ "$task_monitor_pid" = "$task_start_pid" ]; then
+            kill -TERM "$task_start_pid" 2>/dev/null || true
+        fi
+        echo 'Standalone startup timed out; inspect daemon.log' >&2
+        exit 1
         ;;
     monitor)
         task_child_pid=''
@@ -55,7 +91,7 @@ case "${1:-}" in
                 esac
             fi
             "$BASE/profile.sh" stock || true
-            rm -f "$RUNTIME/monitor.pid" "$RUNTIME/client.pid"
+            rm -f "$RUNTIME/monitor.pid" "$RUNTIME/monitor.ready" "$RUNTIME/client.pid"
         }
         trap cleanup EXIT
         trap 'exit 0' HUP INT TERM
@@ -112,6 +148,7 @@ case "${1:-}" in
             kill -0 "$task_child_pid" 2>/dev/null || exit 1
             if "$BASE/bin/alisa-standalone" status "$BASE/state" 2>/dev/null | grep -q '"agent_connected": true'; then
                 "$BASE/profile.sh" commit
+                echo "$$" > "$RUNTIME/monitor.ready"
                 echo 'Standalone runtime ready'
                 wait "$task_child_pid" || true
                 exit 0
