@@ -23,12 +23,12 @@ def ssh(host,command,data=None):
 def check_firmware(host):
     import sys
     sys.path.insert(0,str(ROOT.parents[1]))
-    from alisa_cli.firmware import classify,ARCHITECTURES
+    from alisa_cli.firmware import inspect_identity,ARCHITECTURES
     compatible=ssh(host,'cat /proc/device-tree/compatible').decode(errors='replace')
     pair=tuple(ssh(host,'sha256sum '+path).decode().split()[0] for path in
                ['/system/vendor/quasar/maind','/system/vendor/quasar/libs/libyandex_evil.so'])
-    report=classify(compatible,pair)
-    if not report['model']:raise RuntimeError('Only Station Lite 1, Lite 2, Mini 2 and Station 2 are supported')
+    report=inspect_identity(compatible,pair,lambda command:ssh(host,command))
+    if not report['model']:raise RuntimeError('Unsupported Station model')
     if not report['firmware_files_present']:raise RuntimeError('Cannot read firmware components')
     if ssh(host,'uname -m').decode().strip() not in ARCHITECTURES:raise RuntimeError('Unsupported station architecture')
     for warning in report['warnings']:print(warning,file=sys.stderr)
@@ -64,6 +64,23 @@ def profiles(launch,quasar,model=None):
     return launch,quasar
 
 
+def mini1_payload(binary):
+    """Require client and adapter from the same verified, rebuilt package."""
+    package = ROOT.parents[1]/'assets/native'
+    names = {'bin/alisa-standalone': binary, 'volume-libs/libasound.so.2': package/'volume-libs/libasound.so.2'}
+    try:
+        manifest = json.loads((package/'manifest.json').read_text(encoding='utf-8'))
+        files = {name: path.read_bytes() for name, path in names.items()}
+        if 'mini1' not in manifest['model'].split('+') or any(
+            not data or hashlib.sha256(data).hexdigest() != manifest['files'][name]
+            for name, data in files.items()
+        ):
+            raise ValueError('Incomplete or mismatched Mini 1 package')
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        raise RuntimeError('Mini 1 requires a rebuilt ARMhf/glibc 2.23 package with a matching volume adapter') from error
+    return files
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--host',required=True)
     parser.add_argument('--include-login',action='store_true')
@@ -71,6 +88,7 @@ def main():
                         help='Validated ARM client binary (default: build/client/alisa-standalone)')
     args=parser.parse_args()
     report=check_firmware(args.host)
+    native=mini1_payload(args.binary) if report['model']=='mini1' else {'bin/alisa-standalone':args.binary.read_bytes()}
     launch=json.loads(ssh(args.host,'cat /system/vendor/quasar/launch.json'))
     quasar=json.loads(ssh(args.host,'cat /system/vendor/quasar/quasar.cfg'))
     launch,quasar=profiles(launch,quasar,report['model'])
@@ -78,7 +96,7 @@ def main():
     with wave.open(stream,'wb') as f:f.setnchannels(1);f.setsampwidth(2);f.setframerate(16000);f.writeframes(bytes(16000*2*12))
     files={'launch.bridge.json':json.dumps(launch).encode(),'quasar.speech.json':json.dumps(quasar).encode(),
            'tts-asound.conf':b'</usr/share/alsa/alsa.conf>\npcm.alice_native_tts { type plug slave.pcm "default" }\n',
-           'focus-0.wav':stream.getvalue(),'bin/alisa-standalone':args.binary.read_bytes(),
+           'focus-0.wav':stream.getvalue(),**native,
            'licenses/sonic-LICENSE':(ROOT/'research/upstream/sonic/LICENSE').read_bytes()}
     for name,path in {
         'webrtc-LICENSE':'webrtc-neteq/LICENSE',
@@ -91,7 +109,8 @@ def main():
     for name in ['native_agent','vqe_tap','tts_gate','mute_gpio']:files[name+'.so']=(ROOT/'build'/(name+'.so')).read_bytes()
     for name in ['profile.sh','indicator.sh','run.sh','clock-eyes.sh','clock-display.sh','clock-isolation.sh','midi-clock.sh']:files[name]=(ROOT/'station'/name).read_bytes()
     if args.include_login:files['state/web-session.json']=(ROOT/'state/web-session.json').read_bytes()
-    ssh(args.host,f'umask 077; mkdir -p {BASE}/bin {BASE}/state {BASE}/licenses; chmod 700 {BASE} {BASE}/state')
+    volume_dir=f' {BASE}/volume-libs' if report['model']=='mini1' else ''
+    ssh(args.host,f'umask 077; mkdir -p {BASE}/bin {BASE}/state {BASE}/licenses{volume_dir}; chmod 700 {BASE} {BASE}/state')
     hashes={}
     for name,data in files.items():
         path=BASE+'/'+name

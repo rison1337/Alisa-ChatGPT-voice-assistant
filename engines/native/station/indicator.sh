@@ -27,6 +27,13 @@ if [ -z "${ALICE_LED_ROOT:-}" ] && [ ! -e "$LED:red:ring1" ]; then
         LED=/sys/class/leds/mini2
     fi
 fi
+# Mini 1 has no supported GPT LED backend; acknowledge without hardware writes.
+if [ "${ALISA_MINI1:-0}" = 1 ]; then
+    while IFS= read -r task_led_command; do
+        case "$task_led_command" in F\ *) printf 'FRAME\n' ;; B) printf 'BLUE\n' ;; esac
+    done
+    exit 0
+fi
 # Frames carry 3 logical zones; zone_map gives the logical zone of each
 # physical one. Mini 2 doubles every logical zone onto a physical pair; its
 # clock LEDs (mini2:white:clock*) are never touched.

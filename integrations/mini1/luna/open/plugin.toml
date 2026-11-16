@@ -1,0 +1,12 @@
+id = "local-alisa-gpt-open"
+name = "Alisa GPT: открыть чат"
+version = "1.0.0"
+entry = "main.lua"
+description = "Локально запускает Alisa Voice по фразе «открой чат»"
+permissions = ["commands", "exec"]
+
+[commands]
+phrases = ["открой чат"]
+
+[launch]
+mode = "service"

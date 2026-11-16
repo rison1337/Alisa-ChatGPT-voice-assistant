@@ -65,7 +65,8 @@ class VoiceDaemon {
                 if(!entry.value("account_id",std::string()).empty()&&entry["account_id"]!=account)throw std::runtime_error("chat_account_mismatch");
                 CallOptions options;
                 options.voice=settings.view().value("voice",std::string("cove"));
-                options.device=test_mode?"null":"default";
+                const char *pcm_device=std::getenv("ALISA_PCM_DEVICE");
+                options.device=test_mode?"null":(pcm_device&&*pcm_device?pcm_device:"default");
                 if(!test_mode)options.microphone=(runtime_directory/"microphone.sock").string();
                 options.conversation_id=entry.value("conversation_id",std::string());
                 options.parent_message_id=entry.value("parent_message_id",std::string());

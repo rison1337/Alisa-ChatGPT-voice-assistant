@@ -84,6 +84,37 @@ class Models(unittest.TestCase):
   r=self.check('bridge',output('yandex,station-micro',*LITE1))
   self.assertEqual(r['station_missing'],['socat'])
 
+ def test_mini1_native_with_no_aplay_is_recognized_but_unverified(self):
+  pair=('255d97e7199f05b5ef09cbd28dfedc35b2050e75db5b40d1546a9cb999602eda',
+        '23eb591fe3397a2e3e9d58ff2bc846be541a1a2f0f8cfd957abbc2d674ea1da1')
+  response=output('amlogic, axg',*pair,tools=('sha256sum',))
+  c=state.defaults('native');c['host']='192.0.2.10'
+  def reply(command):
+   return '{"other":"value","deviceType":"yandexmini"}' if 'quasar.cfg' in command else response
+  with patch.object(doctor.Station,'text',side_effect=reply),patch('alisa_cli.windows.missing',return_value=[]),patch('alisa_cli.doctor.shutil.which',return_value='/usr/bin/tool'):
+   report=doctor.inspect(c)
+  self.assertEqual(report['model'],'mini1')
+  self.assertEqual(report['firmware_status'],'unverified')
+  self.assertEqual(report['station_missing'],[])
+  self.assertTrue(report['ok'])
+
+ def test_generic_amlogic_without_mini_identity_is_rejected(self):
+  from alisa_cli.firmware import classify
+  pair=('a'*64,'b'*64)
+  self.assertIsNone(classify('amlogic, axg',pair)['model'])
+  self.assertIsNone(classify('amlogic, axg',pair,'otherdevice')['model'])
+
+ def test_mini1_bridge_is_rejected(self):
+  from alisa_cli.firmware import classify
+  pair=('a'*64,'b'*64)
+  report=classify('amlogic, axg',pair,'yandexmini')
+  self.assertEqual(report['model'],'mini1')
+  config=state.defaults('bridge');config['host']='192.0.2.10'
+  with self.assertRaises(RuntimeError):
+   doctor.require(config,{'root':True,'plum':True,'model':'mini1','mode_supported':False,
+    'firmware_abi_supported':False,'firmware_files_present':True,'architecture':'aarch64',
+    'free_data_kib':55000,'host_missing':[],'station_missing':[],'ok':False})
+
  def test_windows_chromium_outside_path_counts_as_installed(self):
   import os,tempfile
   from pathlib import Path

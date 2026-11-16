@@ -9,7 +9,7 @@ mkdir -p "$RUNTIME"
 cleanup_receivers() {
     # A remote command without a PTY may survive a dropped SSH connection.
     # Match only this prototype's receiver and its earlier capture probes.
-    for task_audio_pid in $(pidof arecord socat aplay 2>/dev/null || true); do
+    for task_audio_pid in $(pidof arecord socat aplay true 2>/dev/null || true); do
         [ -r "/proc/$task_audio_pid/cmdline" ] || continue
         task_audio_command=$(tr '\000' ' ' < "/proc/$task_audio_pid/cmdline")
         case "$task_audio_command" in
