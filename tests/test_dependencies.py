@@ -25,6 +25,13 @@ class LoginDependencies(unittest.TestCase):
             bundled.parent.mkdir(parents=True);bundled.touch()
             self.assertEqual(dependencies.login_missing(),['xauth'])
 
+    def test_pacman_only_installs_packages_for_missing_tools(self):
+        with patch.object(dependencies.sys,'platform','linux'),patch.object(dependencies.shutil,'which',return_value='/usr/bin/pacman'):
+            self.assertEqual(dependencies.command('native',missing=['Xvfb']),['sudo','pacman','-S','--needed','xorg-server-xvfb'])
+            self.assertEqual(dependencies.command('native',missing=['ssh','ssh-keygen','ssh-keyscan']),['sudo','pacman','-S','--needed','openssh'])
+            with self.assertRaisesRegex(RuntimeError,'PipeWire/PulseAudio'):
+                dependencies.command('bridge',missing=['работающий PipeWire/PulseAudio'])
+
     def test_missing_display_reports_an_install_command_before_login(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(dependencies,'ROOT',Path(folder)),patch.object(dependencies.sys,'platform','linux'),patch.object(dependencies.shutil,'which',side_effect=lambda tool:'/usr/bin/apt-get' if tool=='apt-get' else None):
             with self.assertRaisesRegex(RuntimeError,'sudo apt-get install.*xvfb xauth'):

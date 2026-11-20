@@ -45,6 +45,18 @@ class Models(unittest.TestCase):
   from alisa_cli.errors import PublicError
   with self.assertRaisesRegex(PublicError,'Xvfb, xauth') as caught:doctor.require(c,report)
   self.assertEqual(caught.exception.code,'login_display_missing')
+ def test_native_reinstall_accepts_login_saved_on_station_without_browser_tools(self):
+  config=state.defaults('native');config['host']='192.0.2.10'
+  reply=output('yandex,prune',doctor.MAIND,doctor.VQE)
+  reply+='ALISA_FIRMWARE_VERSION=0.369.1.50.4794654278.20261021.133\nALISA_NATIVE_LOGIN_SAVED=1\n'
+  with patch.object(doctor.sys,'platform','linux'),patch.object(doctor.Station,'text',return_value=reply) as ssh,patch.object(doctor.shutil,'which',side_effect=lambda tool:'/usr/bin/ssh' if tool=='ssh' else None),patch.object(doctor,'login_missing',return_value=['Xvfb','xauth']) as display:
+   report=doctor.require(config)
+  self.assertFalse(config['installed'])
+  self.assertEqual(report['host_missing'],[])
+  self.assertTrue(report['login_saved'])
+  self.assertEqual(report['firmware_version'],'0.369.1.50.4794654278.20261021.133')
+  display.assert_not_called()
+  self.assertIn('[ -s '+doctor.NATIVE+'/state/web-session.json ]',ssh.call_args.args[0])
  def test_lite1_with_other_hashes_is_unverified_but_installable(self):
   r=self.check('native',output('yandex,station-micro',doctor.MAIND,doctor.VQE))
   self.assertFalse(r['firmware_abi_supported']);self.assertTrue(r['ok']);self.assertTrue(r['warnings'])

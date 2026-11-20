@@ -1,7 +1,7 @@
 import argparse,copy,json,subprocess,sys,time
 from .state import ROOT,MODES,STYLES,STYLE_NAMES,LED_SCOPES,VOICES,load,save,validate
 from . import doctor,network,runtime,autostart,accounts,vpn
-from . import ui,ssh_setup
+from . import ui,ssh_setup,dependencies
 from . import __version__,updates
 from .firmware import apply_model,supports_lighting,LIGHTING_UNAVAILABLE
 if sys.platform=='win32':MODES=('native',)
@@ -246,13 +246,12 @@ def wizard(config):
     if updating:ui.note('Уже установлено. Мастер обновит программу и настройки; вход ChatGPT и чаты сохранятся.','cyan')
     ui.note('Мастер сам выполнит проверки, предложит нужные настройки и запустит установленный режим.')
     ui.step(3,'Подключение и проверка колонки')
-    import shutil
-    if ssh_setup.missing_tools():
+    ssh_missing=ssh_setup.missing_tools()
+    if ssh_missing:
         if sys.platform=='win32':
             raise RuntimeError('Повреждены библиотеки Windows-пакета. Повторно запустите START-WINDOWS.cmd.')
         elif yes('Установить OpenSSH-клиент через менеджер пакетов?',True):
-            from . import dependencies
-            dependencies.install('native')
+            dependencies.install('native',missing=ssh_missing)
     while True:
         try:setup_key(config,allow_saved=True);break
         except (RuntimeError,subprocess.SubprocessError) as error:
@@ -261,18 +260,14 @@ def wizard(config):
     report=doctor.inspect(config)
     if report['host_missing']:
         print('Нужны компоненты ПК:',', '.join(report['host_missing']))
-        if sys.platform=='win32':
-            from . import dependencies
-            dependencies.install(config['mode'])
-        elif yes('Установить пакеты через системный менеджер?'):
-            from . import dependencies
-            dependencies.install(config['mode'])
+        if sys.platform=='win32' or yes('Установить пакеты через системный менеджер?'):
+            dependencies.install(config['mode'],missing=report['host_missing'])
     report=doctor.inspect(config) if report['host_missing'] else report
     show(report);doctor.require(config,report=report,warn=False)
     apply_model(config,report.get('model'))
     ui.step(4,'Доступность ChatGPT');network_result=network.check(config);show(network_result)
     ui.step(5,'Настройка режима')
-    ui.note('Сохранённый вход будет использован повторно; при необходимости его можно обновить после установки.' if updating else 'Вход в ChatGPT будет выполнен после установки клиента.')
+    ui.note('Сохранённый вход будет использован повторно. При необходимости его можно обновить после установки.' if report.get('login_saved') else 'После установки мастер предложит войти в ChatGPT.')
     ui.step(6,'Дополнительные настройки')
     options=installation_options(config,network_result)
     use_vpn=options['use_vpn'];vpn_source=options['source'];vpn_selection=options['selection']

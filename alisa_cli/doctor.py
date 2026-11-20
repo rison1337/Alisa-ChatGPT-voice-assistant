@@ -2,6 +2,7 @@ import json,shutil,subprocess,sys
 from .ssh import Station
 from .firmware import MAIND,VQE,BUILDS,ARCHITECTURES,WARNING,classify
 from .dependencies import login_missing
+from .runtime import NATIVE
 
 def windows_chromium():
     if sys.platform!='win32':return None
@@ -11,6 +12,10 @@ def windows_chromium():
 def inspect(config):
     s=Station(config)
     script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay base64 sha256sum ip; do command -v "$x" || true; done; command -v socat || command -v /data/opt/entware/bin/socat || true; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
+    native=config['mode']=='native'
+    if native:
+        session=f'{NATIVE}/state/web-session.json'
+        script+=f'; printf "\\n"; if [ -f {session} ] && [ -r {session} ] && [ -s {session} ]; then printf "ALISA_NATIVE_LOGIN_SAVED=1\\n"; fi'
     lines=s.text(script).replace('\x00',' ').splitlines()
     if len(lines)<3:raise RuntimeError('Колонка вернула неполный ответ SSH. Повторите проверку подключения.')
     root=lines[0].strip()=='0'
@@ -19,13 +24,17 @@ def inspect(config):
     pair=(hashes.get('/system/vendor/quasar/maind'),hashes.get('/system/vendor/quasar/libs/libyandex_evil.so'))
     firmware=classify(device_tree,pair)
     model=firmware['model'];compatible=model is not None
-    mode_supported=compatible and (config['mode']=='native' or model in ('lite2','mini2'))
-    missing=[tool for tool in ['ssh','chromium'] if not shutil.which(tool)]
-    missing+=login_missing()
+    mode_supported=compatible and (native or model in ('lite2','mini2'))
+    saved_login=native and 'ALISA_NATIVE_LOGIN_SAVED=1' in lines
     if sys.platform=='win32':
         from .windows import missing as windows_missing
         missing=windows_missing()
-    if config['mode']=='bridge':
+    else:
+        missing=['ssh'] if not shutil.which('ssh') else []
+        if not saved_login:
+            if not shutil.which('chromium'):missing.append('chromium')
+            missing+=login_missing()
+    if not native:
         for tool in ['pactl','pacat','paplay']:
             if not shutil.which(tool):missing.append(tool)
         if sys.platform!='linux':missing.append('Windows audio backend (следующий этап)')
@@ -42,6 +51,7 @@ def inspect(config):
     version=next((line.partition('=')[2].strip() for line in lines if line.startswith('ALISA_FIRMWARE_VERSION=')),None)
     return {'ssh':True,'root':root,'plum':compatible,'mode_supported':mode_supported,**firmware,'architecture':lines[1].strip(),
         'firmware_version':version or None,'firmware_sha256':{'maind':pair[0],'vqe':pair[1]},
+        **({'login_saved':saved_login} if native else {}),
         'free_data_kib':available,'host_missing':missing,'station_missing':missing_remote,
         'ok':root and compatible and mode_supported and firmware['firmware_files_present'] and lines[1].strip() in ARCHITECTURES and available is not None and available>12000 and not missing and not missing_remote}
 
