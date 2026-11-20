@@ -1,7 +1,7 @@
 """Guided setup branches and diagnostics shown to the installer user."""
 import contextlib,io,json,unittest
 from unittest.mock import patch
-from alisa_cli import cli,state,storage,ui
+from alisa_cli import cli,devices,menus,state,storage,ui
 
 def config(mode='native'):
     value=state.defaults(mode);value['host']='192.0.2.44';return value
@@ -52,6 +52,37 @@ class InstallationFlow(unittest.TestCase):
         self.assertIn(('Применить настройки и обновить установленную программу?',True),prompts)
         self.assertIn(('Обновить вход ChatGPT?',False),prompts)
         self.assertTrue(any('Обновление завершено' in text for text in messages))
+
+    def test_wizard_returns_to_menu_when_optional_voice_test_fails(self):
+        value=config();messages=[]
+        report={'ok':True,'host_missing':[],'login_saved':True}
+        options={'use_vpn':False,'source':None,'selection':None,'vpn_autostart':False}
+        failure='session_refresh_html_403'
+        def install(config,activate=True):
+            config['installed']=True
+            return {'installed':True}
+        with contextlib.ExitStack() as stack:
+            for module,name,result in [
+                (devices,'enter',None),(cli,'load',value),(ui,'banner',None),
+                (cli.updates,'clean_downloads',None),(cli.updates,'show_result',None),(cli.updates,'startup_offer',None),
+                (cli,'setup_key',None),(cli.doctor,'inspect',report),(cli.doctor,'require',None),
+                (cli.network,'check',{'country':'RU'}),(cli,'installation_options',options),
+                (cli,'start_mode',{'login_saved':True}),(storage,'report',{'enough':True}),
+                (cli,'save',None),(cli,'show',None),(cli,'show_storage',None),
+                (cli.autostart,'station_flag',None),(cli.autostart,'set_enabled',None)]:
+                stack.enter_context(patch.object(module,name,return_value=result))
+            stack.enter_context(patch('alisa_cli.winssh.prepare'))
+            stack.enter_context(patch('alisa_cli.install.install',side_effect=install))
+            stack.enter_context(patch.object(cli,'yes',side_effect=lambda title,default=False:default))
+            stack.enter_context(patch.object(cli,'verify_with_stun_retry',side_effect=RuntimeError(failure)))
+            stack.enter_context(patch.object(ui,'note',side_effect=lambda text,*args:messages.append(text)))
+            menu=stack.enter_context(patch.object(menus,'run',return_value=0))
+            self.assertEqual(cli.main(['native']),0)
+        self.assertTrue(value['installed'])
+        menu.assert_called_once()
+        self.assertEqual(menu.call_args.args[0],'native')
+        self.assertIn('Проверка голоса не пройдена. '+failure,messages)
+        self.assertTrue(any('Установка завершена' in text for text in messages))
 
 class Diagnostics(unittest.TestCase):
     def test_empty_missing_components_are_hidden_in_terminal_but_preserved_in_json(self):

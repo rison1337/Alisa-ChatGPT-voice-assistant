@@ -293,7 +293,13 @@ def wizard(config):
     logged_in=current.get('login_saved',False)
     if logged_in:ui.note('Вход ChatGPT уже сохранён. Повторная авторизация не нужна.','green')
     if yes('Обновить вход ChatGPT?' if logged_in else 'Войти в ChatGPT сейчас?',not logged_in):accounts.login(config)
-    if yes('Проверить голос коротким тестовым ответом?',True):show(verify_with_stun_retry(config))
+    if yes('Проверить голос коротким тестовым ответом?',True):
+        try:
+            show(verify_with_stun_retry(config))
+        except (RuntimeError,ValueError,OSError) as error:
+            ui.note('Проверка голоса не пройдена. '+str(error),'yellow')
+        except subprocess.SubprocessError:
+            ui.note('Проверка голоса прервалась из-за ошибки внешнего компонента.','yellow')
     ui.note(('Обновление завершено.' if updating else 'Установка завершена.')+' Управление доступно в меню.','green')
 
 def _main(argv=None):
