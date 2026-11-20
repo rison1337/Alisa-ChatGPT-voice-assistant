@@ -13,6 +13,7 @@
 #endif
 #include "effects.hpp"
 #include "voice_state.hpp"
+#include "probe_audio.hpp"
 #include <rtc/rtc.hpp>
 #include <opus.h>
 #include <algorithm>
@@ -30,6 +31,7 @@ struct CallOptions {
     std::string conversation_id,parent_message_id,voice_session_id;
     std::string synthetic_text="Проверка экспериментального клиента. Ответь одним словом: готово.";
     std::string expected_reply="готов";
+    std::vector<int16_t> probe_pcm;
     bool probe=false;
 #ifdef ALISA_TRANSPORT_STUDY
     bool normal_speed=false,correct_receiver_reports=false;
@@ -95,6 +97,16 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
 #endif
     std::atomic<bool> open_cue_played{false};
     std::atomic<unsigned int> microphone_frames{0},microphone_nonzero{0},muted_frames{0};
+    std::atomic<unsigned int> uplink_rejected{0},probe_pcm_sent{0},probe_answer_blocks{0};
+    const Clock::time_point call_start=Clock::now();
+    std::atomic<int> channel_open_ms{-1},first_mic_ms{-1},first_uplink_ms{-1},first_speech_ms{-1},goodbye_ms{-1};
+
+    void time_first(std::atomic<int> &milestone)const{
+        if(milestone.load()!=-1)return;
+        int empty=-1;
+        const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-call_start);
+        milestone.compare_exchange_strong(empty,static_cast<int>(elapsed.count()));
+    }
     std::map<int,unsigned int> sample_sizes;
     std::map<int,unsigned int> timestamp_steps;uint32_t last_timestamp=0;
     uint32_t source_ssrc=0;bool have_timestamp=false;
@@ -132,10 +144,11 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 if(event_types.size()<64)++event_types[kind];
+                if(kind=="goodbye")time_first(goodbye_ms);
                 if(server_state.receive(kind,payload)){
                     failed=true;changed.notify_all();return;
                 }
-                if(options.probe){
+                if(options.probe&&options.probe_pcm.empty()){
                     std::function<void(const json &,const std::string &,int)> scan;
                     scan=[&](const json &node,const std::string &path,int depth){
                         if(depth>5||!node.is_object())return;
@@ -156,6 +169,7 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
                 }
                 if(kind=="chat_message_delta"&&payload.contains("delta")){
                     auto delta=payload["delta"];
+                    const bool check_caption=options.probe&&(options.probe_pcm.empty()||first_speech_ms.load()>=0);
                     if(delta.contains("v")&&delta["v"].is_object()&&delta["v"].contains("conversation_id")&&delta["v"]["conversation_id"].is_string()){
                         auto value=delta["v"]["conversation_id"];
                         if(!options.conversation_id.empty()&&value!=options.conversation_id){failed=true;return;}
@@ -168,7 +182,7 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
                         if(msg.contains("id")&&(caption_role=="assistant"||caption_role=="user")){
                             identity["parent_message_id"]=msg["id"];updates["parent_message_id"]=msg["id"];
                         }
-                        if(options.probe&&caption_role=="assistant"&&msg.contains("content")){
+                        if(check_caption&&caption_role=="assistant"&&msg.contains("content")){
                             auto content=msg["content"];
                             if(content.contains("parts")&&content["parts"].is_array())
                                 for(auto &part:content["parts"])if(probe_caption.size()<2048){
@@ -177,7 +191,7 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
                                         if(part.contains(key)&&part[key].is_string()){probe_caption+=part[key].get<std::string>();break;}
                                 }
                         }
-                    }else if(options.probe&&caption_role=="assistant"&&delta.contains("v")&&delta["v"].is_array()){
+                    }else if(check_caption&&caption_role=="assistant"&&delta.contains("v")&&delta["v"].is_array()){
                         for(auto &operation:delta["v"]){
                             if(!operation.is_object()||operation.value("o",std::string())!="append")continue;
                             auto path=operation.value("p",std::string());
@@ -185,7 +199,7 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
                                operation.contains("v")&&operation["v"].is_string()&&probe_caption.size()<2048)
                                 probe_caption+=operation["v"].get<std::string>();
                         }
-                    }else if(options.probe&&caption_role=="assistant"&&delta.contains("v")&&delta["v"].is_string()&&probe_caption.size()<2048)
+                    }else if(check_caption&&caption_role=="assistant"&&delta.contains("v")&&delta["v"].is_string()&&probe_caption.size()<2048)
                         probe_caption+=delta["v"].get<std::string>();
                     probe_reply_match=probe_caption.find(options.expected_reply)!=std::string::npos;
                 }
@@ -267,7 +281,9 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
         track->onMessage([weak](rtc::binary data){if(auto self=weak.lock())self->receive_rtp(data);},nullptr);
         rtc::DataChannelInit dc_config;dc_config.negotiated=true;dc_config.id=0;
         dc=pc->createDataChannel("oai-events",dc_config);
-        dc->onOpen([weak]{if(auto self=weak.lock()){self->channel_open=true;self->changed.notify_all();}});
+        dc->onOpen([weak]{if(auto self=weak.lock()){
+            self->time_first(self->channel_open_ms);self->channel_open=true;self->changed.notify_all();
+        }});
         dc->onMessage(nullptr,[weak](std::string raw){if(auto self=weak.lock())self->data_message(raw);});
         pc->setLocalDescription();
     }
@@ -310,6 +326,16 @@ public:
             {"open_cue_played",open_cue_played.load()},
             {"identity_shapes",identity_shapes},{"rss_kib",rss_kib()}};
         result["server_close"]=server_state.close;result["last_server_state"]=server_state.last_state;
+        result["milestones_ms"]={{"channel_open",channel_open_ms.load()},{"first_mic_frame",first_mic_ms.load()},
+            {"first_uplink",first_uplink_ms.load()},{"first_nonzero_uplink",first_speech_ms.load()},
+            {"goodbye",goodbye_ms.load()}};
+        result["uplink_rejected"]=uplink_rejected.load();
+        if(options.probe){
+            result["probe_input"]=options.probe_pcm.empty()?"text":"pcm";
+            result["probe_pcm_frames_sent"]=probe_pcm_sent.load();
+            result["probe_pcm_frames_expected"]=(options.probe_pcm.size()+319)/320;
+            if(!options.probe_pcm.empty())result["probe_answer_blocks"]=probe_answer_blocks.load();
+        }
         result["connection"]={{"ice_state",ice_name(ice_state.load())},{"peer_state",peer_name(peer_state.load())},
             {"gathered",gathered.load()},{"data_channel_open",channel_open.load()}};
         if(options.probe)result["rtp_timing"]=playout.timing();
@@ -406,6 +432,7 @@ public:
         SpeechTempo tempo;bool tail_flushed=false;
 #endif
         std::deque<short> microphone;
+        ProbeAudio probe_audio(options.probe_pcm);
         auto last_speech=Clock::time_point::min(),mute_check=Clock::time_point::min();float gain=1.995262f;unsigned int silence=0;
         bool microphone_allowed=false;
         while(!stop_requested&&!stopping&&!failed){
@@ -419,12 +446,13 @@ public:
                 is_speaking=false;last_speech=Clock::time_point::min();
             }
             if(Clock::now()-tick>std::chrono::milliseconds(30)){tick=Clock::now();++loop_overruns;}
-            short in[320]{};unsigned char encoded[400];
+            int16_t in[320]{};unsigned char encoded[400];
             if(input_owner.fd>=0){
                 short block[160];
                 for(int i=0;i<16;++i){auto count=recv(input_owner.fd,block,sizeof(block),MSG_DONTWAIT);
                     if(count<=0)break;
                     ++microphone_frames;
+                    time_first(first_mic_ms);
                     for(int j=0;j<count/2;++j)microphone.push_back(block[j]);
                 }
                 while(microphone.size()>640)microphone.pop_front();
@@ -441,15 +469,25 @@ public:
                 if(!microphone_allowed){std::fill(std::begin(in),std::end(in),0);++muted_frames;}
                 else for(short value:in)if(value){++microphone_nonzero;break;}
             }
+            const bool fixture_frame=!probe_audio.finished()&&track->isOpen()&&
+                Clock::now()-start>=std::chrono::milliseconds(500)&&probe_audio.next(in);
             auto encode_start=Clock::now();
             int size=opus_encode(encoder.get(),in,320,encoded,sizeof(encoded));
             unsigned int encode_us=std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-encode_start).count();
             max_encode_us=std::max(max_encode_us.load(),encode_us);
             if(size>0&&track->isOpen()){
                 rtp_config->timestamp+=960;
-                track->send(reinterpret_cast<const rtc::byte *>(encoded),static_cast<size_t>(size));++sent;
+                const bool accepted=track->send(reinterpret_cast<const rtc::byte *>(encoded),static_cast<size_t>(size));
+                ++sent;
+                if(accepted){
+                    time_first(first_uplink_ms);
+                    if(first_speech_ms.load()==-1&&
+                       std::any_of(std::begin(in),std::end(in),[](int16_t sample){return sample!=0;}))
+                        time_first(first_speech_ms);
+                    if(fixture_frame)++probe_pcm_sent;
+                }else ++uplink_rejected;
             }
-            if(options.probe&&!asked&&Clock::now()-start>std::chrono::milliseconds(500)&&dc->isOpen()){
+            if(options.probe&&options.probe_pcm.empty()&&!asked&&Clock::now()-start>std::chrono::milliseconds(500)&&dc->isOpen()){
                 relay_text(options.synthetic_text);asked=true;
             }
             short samples[960*2]{};
@@ -508,7 +546,10 @@ public:
             if(sound)++nonzero;
             int peak=0;long long power=0;
             for(short value:samples){peak=std::max(peak,std::abs(int(value)));power+=int(value)*int(value);}
-            if(power>1920LL*128*128){last_speech=Clock::now();++audible_blocks;}
+            if(power>1920LL*128*128){
+                last_speech=Clock::now();++audible_blocks;
+                if(!options.probe_pcm.empty()&&first_speech_ms.load()>=0)++probe_answer_blocks;
+            }
             is_speaking=last_speech!=Clock::time_point::min()&&Clock::now()-last_speech<std::chrono::milliseconds(250);
             silence=peak?0:silence+1;if(silence>=6)gain=1.995262f;
             float wanted=peak?std::min(1.995262f,31128.0f/peak):1.995262f;
@@ -521,17 +562,22 @@ public:
             if(options.probe){
                 // Wait beyond the complete reply so the server can persist the
                 // final parent, rather than closing on the first audio chunk.
-                if(audible_blocks>8&&assistant_seen&&Clock::now()-start>std::chrono::seconds(5)&&
+                const auto answer_blocks=options.probe_pcm.empty()?audible_blocks.load():probe_answer_blocks.load();
+                if(probe_audio.finished()&&answer_blocks>8&&assistant_seen&&Clock::now()-start>std::chrono::seconds(5)&&
                    last_speech!=Clock::time_point::min()&&Clock::now()-last_speech>std::chrono::seconds(2))break;
                 if(Clock::now()-start>std::chrono::seconds(30))break;
             }
             tick+=std::chrono::milliseconds(20);std::this_thread::sleep_until(tick);
         }
         json result=stats();result["underruns"]=output.underruns;
-        result["success"]=!failed&&audible_blocks>8&&assistant_seen;
+        const bool input_sent=options.probe_pcm.empty()||(probe_audio.finished()&&
+            probe_pcm_sent==(options.probe_pcm.size()+319)/320&&first_speech_ms>=0);
+        const auto answer_blocks=options.probe_pcm.empty()?audible_blocks.load():probe_answer_blocks.load();
+        result["success"]=!failed&&input_sent&&answer_blocks>8&&assistant_seen;
         {std::lock_guard<std::mutex> lock(mutex);result["identity"]=identity;
             if(!server_state.error.empty())result["error"]=server_state.error;
-            if(options.probe)result["synthetic_caption"]=probe_caption;}
+            else if(!input_sent&&!failed&&!stop_requested&&!stopping)result["error"]="probe_pcm_incomplete";
+            if(options.probe&&options.probe_pcm.empty())result["synthetic_caption"]=probe_caption;}
         stop();pc->close();return result;
     }
     ~VoiceCall(){stop();if(pc)pc->close();}

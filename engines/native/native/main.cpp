@@ -17,7 +17,8 @@ int main(int argc,char **argv){
 #else
                 {"audio_engine","Sonic PI"},{"audio_pipeline_revision",4},
 #endif
-                {"live_settings_revision",1},{"ice_stun_toggle_revision",1},{"voice_diagnostics_revision",1},{"pointer_bits",sizeof(void *)*8},
+                {"live_settings_revision",1},{"ice_stun_toggle_revision",1},{"voice_diagnostics_revision",2},
+                {"audio_probe_revision",1},{"pointer_bits",sizeof(void *)*8},
                 {"rss_kib",rss_kib()},{"opus",opus_get_version_string()},
                 {"curl",curl_version_info(CURLVERSION_NOW)->version}}.dump()<<"\n";return 0;
         }
@@ -67,8 +68,9 @@ int main(int argc,char **argv){
             std::cout<<control_request(state,request).dump()<<"\n";return 0;
         }
         if(action!="probe")throw std::runtime_error("unknown_action");
-        auto auth=ensure_web_auth(state/"web-session.json");
         CallOptions options;options.probe=true;options.device="null";
+        bool audio_probe=argc==6&&std::string_view(argv[4])=="--audio";
+        if(argc>4&&!audio_probe)throw std::runtime_error("invalid_probe_arguments");
         if(argc>3){
             auto request=read_json(argv[3]);
             options.synthetic_text=request.value("text",options.synthetic_text);
@@ -82,12 +84,30 @@ int main(int argc,char **argv){
             options.correct_receiver_reports=request.value("correct_receiver_reports",false);
 #endif
         }
-        auto call=std::make_shared<VoiceCall>(options);
+        if(audio_probe){
+            options.probe_pcm=read_probe_pcm(argv[5]);
+            // Use a fresh conversation in the diagnostic, even if the request
+            // file was copied from another probe.
+            options.conversation_id.clear();
+            options.parent_message_id.clear();
+            options.voice_session_id.clear();
+        }
+        auto auth=ensure_web_auth(state/"web-session.json");
+        auto call=std::make_shared<VoiceCall>(std::move(options));
         json result;
         try{result=call->run(auth);}
         catch(const std::exception &exc){call->stop();result=call->stats();
             result["success"]=false;result["error"]=safe_error(exc);}
         call.reset();
+        if(audio_probe){
+            json report=json::object();
+            for(const char *key:{"probe_input","success","error","connection","last_server_state",
+                "server_close","milestones_ms","sent","uplink_rejected","received","microphone_frames",
+                "probe_pcm_frames_sent","probe_pcm_frames_expected","probe_answer_blocks",
+                "probe_reply_match","audible_blocks","alsa_underruns"})
+                if(result.contains(key))report[key]=result[key];
+            std::cout<<report.dump(2)<<"\n";return report.value("success",false)?0:2;
+        }
         if(result.contains("identity")){write_json(state/"probe-conversation.json",result["identity"]);result.erase("identity");}
         if(result.contains("synthetic_caption")){
             write_json(state/"probe-synthetic-caption.json",result["synthetic_caption"]);result.erase("synthetic_caption");

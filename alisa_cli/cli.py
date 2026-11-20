@@ -200,6 +200,9 @@ def friendly(error):
        'voice_server_internal_error':'ChatGPT завершил голосовой сеанс с internal_error. Возвращена Алиса. Точная причина отказа сервера не определена.',
        'voice_server_upstream_error':'ChatGPT завершил голосовой сеанс с upstream_error. Возвращена Алиса.',
        'voice_server_error':'ChatGPT завершил голосовой сеанс с server_error. Возвращена Алиса.',
+       'voice_signaling_html_403':'ChatGPT вернул HTTP 403 с HTML до запуска звука. Причина отказа не определена.',
+       'voice_signaling_browser_challenge_403':'ChatGPT запросил браузерную проверку при подключении Voice (HTTP 403).',
+       'voice_signaling_upstream_403':'ChatGPT отклонил подключение Voice (HTTP 403 до запуска звука).',
        'webrtc_connect_timeout':'Не открылся управляющий канал Voice. Проверьте сеть/VPN; этап соединения сохранён в диагностике.',
        'ice_gather_timeout':'Не удалось собрать сетевые адреса Voice вовремя. Проверьте сеть/VPN и настройку STUN.'}.get(error,error)
 

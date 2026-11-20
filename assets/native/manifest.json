@@ -3,7 +3,7 @@
   "model": "plum+micro+mini2+yandexmidi+bergamot+cucumber",
   "architecture": "armhf",
   "audio_engine": "WebRTC NetEq",
-  "revision": 12,
+  "revision": 13,
   "files": {
     "native_agent.so": "c9a6691860401f3d802b374a8a54bbf473d2a5f7d7b12607919c8b0a50a65585",
     "vqe_tap.so": "b897088cf000590e2c452d47896d18b0d9483b56d360078bfdaa960b609bd28e",
@@ -12,7 +12,7 @@
     "profile.sh": "796895d54657a9b60d82e547bebab5d8d5185aa5dea193fe9ff320035d86f77b",
     "mark.so": "86388c995080d76b95965d6e926304be19025b1e7f253c7ecf4c1f2919497845",
     "focus-0.wav": "6e49db6ecc812f32cb043fb3c02e4aea55329fa8df27724c5b4e2a76ed57c360",
-    "bin/alisa-standalone": "91be3f0d7d59c73c71029f56a3052a44a53571630ec94612e149e59fc780f032",
+    "bin/alisa-standalone": "8a760b4dcc912ea2f60db1f247e32371ab3c8be983fc158fc683490e00999488",
     "licenses/webrtc-LICENSE": "ab00a482b6a3902e40211b43c5d0441962ea99b6cc7c25c0f243fa270b78d482",
     "licenses/webrtc-PATENTS": "01462e2068d1a04c2274f3389773014c14ed9bc3446b28303543bd3e3c064145",
     "licenses/webrtc-AUTHORS": "6ee00fd8589352cfb7632d88ff22a60534f39a4690d40d1ae461ca4752a03a92",

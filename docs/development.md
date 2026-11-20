@@ -81,6 +81,12 @@ c++ -std=c++17 -Wall -Wextra -Werror \
 неверные типы полей и замену произвольного текста сервера на `unknown`.
 Он не требует аккаунта, сети или аудиоустройства.
 
+Для проверки различий HTTP 403 и подачи тестового PCM соберите тем же способом
+`engines/native/tests/voice_diagnostics.cpp`. Проверяются классификация HTML,
+признак браузерной проверки, чтение s16le, граница кадров и отказ при неверном
+или пустом аудиовходе. Параметры изолированного вызова проверяются командой
+`python3 -m unittest discover -s tests -p test_isolated_voice_probe.py`.
+
 ## VPN
 
 Установщик использует неизменённые официальные бинарники. Повторная загрузка с проверкой SHA-256: `python3 scripts/fetch_vpn.py` и `python3 scripts/fetch_xray.py`. Исходники соответствующих версий и Go-зависимости находятся в `third_party/vpn/` после распаковки исходного архива. Параметры upstream-сборки сохранены в `.goreleaser.yaml` sing-box и `.github/workflows/release.yml` Xray.

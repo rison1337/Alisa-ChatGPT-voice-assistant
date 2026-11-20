@@ -2,14 +2,34 @@
 #include "common.hpp"
 #include "ca_store.hpp"
 #include <curl/curl.h>
+#include <cctype>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <openssl/evp.h>
 #include <vector>
 
-struct HttpReply {long status=0;std::string body;json cookies=json::object();};
+struct HttpReply {
+    long status=0;
+    std::string body;
+    json cookies=json::object();
+    bool html=false;
+    bool challenge=false;
+};
+
+inline std::string http_token(std::string_view value){
+    const auto first=value.find_first_not_of(" \t\r\n");
+    if(first==std::string_view::npos)return {};
+    const auto last=value.find_last_not_of(" \t\r\n");
+    std::string token(value.substr(first,last-first+1));
+    for(char &c:token)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return token;
+}
+
 inline std::string rejection_kind(const HttpReply &reply){
-    if(reply.body.find("<html")!=std::string::npos||reply.body.find("<!DOCTYPE")!=std::string::npos)return "challenge";
+    if(reply.challenge)return "browser_challenge";
+    const auto start=http_token(std::string_view(reply.body).substr(0,256));
+    if(reply.html||start.rfind("<html",0)==0||start.rfind("<!doctype html",0)==0)return "html";
     return "upstream";
 }
 inline bool web_auth_current(const json &auth){
@@ -73,6 +93,16 @@ inline HttpReply web_request(const std::string &url,const json &auth,
     }
     auto result=curl_easy_perform(curl);
     curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&reply.status);
+    char *content=nullptr;
+    if(curl_easy_getinfo(curl,CURLINFO_CONTENT_TYPE,&content)==CURLE_OK&&content){
+        std::string_view type(content);
+        reply.html=http_token(type.substr(0,type.find(';')))=="text/html";
+    }
+    // Only the final origin response can identify a Cloudflare challenge.
+    // Proxy CONNECT responses and informational headers are separate in curl.
+    curl_header *mitigation=nullptr;
+    reply.challenge=curl_easy_header(curl,"cf-mitigated",0,CURLH_HEADER,-1,&mitigation)==CURLHE_OK&&
+                    http_token(mitigation->value)=="challenge";
     curl_slist *list=nullptr;curl_easy_getinfo(curl,CURLINFO_COOKIELIST,&list);
     for(auto *item=list;item;item=item->next){
         std::istringstream row(item->data);std::vector<std::string> parts;std::string field;
