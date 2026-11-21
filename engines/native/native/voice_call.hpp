@@ -469,6 +469,15 @@ public:
                 if(!microphone_allowed){std::fill(std::begin(in),std::end(in),0);++muted_frames;}
                 else for(short value:in)if(value){++microphone_nonzero;break;}
             }
+            // Diagnostic workaround: send encoded silence for the first 500 ms
+            // of a live call while keeping RTP transmission active. This gives
+            // the remote Voice session time before real microphone audio starts.
+            // Probes keep their existing audio timing for independent comparison.
+            if (!options.probe &&
+                Clock::now() - start < std::chrono::milliseconds(500)) {
+                std::fill(std::begin(in), std::end(in), 0);
+            }
+
             const bool fixture_frame=!probe_audio.finished()&&track->isOpen()&&
                 Clock::now()-start>=std::chrono::milliseconds(500)&&probe_audio.next(in);
             auto encode_start=Clock::now();
