@@ -8,6 +8,33 @@ processing unit runs inside `maind` on the CPU.
 Verified on firmware `0.376.1.20.4861173338.20261116.100`: wake phrase → ChatGPT voice call →
 audible answer, fully on the speaker, no browser bridge, no host PC in the audio path.
 
+## Before you start — read this
+
+1. **Root and SSH are a prerequisite, not a result.** This port touches system components: it
+   preloads a library into `maind` (the vendor voice daemon), reads `/dev/input/event0` for the
+   hardware mute switch, and installs an init script into `/etc/init.d`. Obtaining root on the
+   speaker is **not** part of Alisa Voice and is not described here. Autostart additionally requires
+   writing one startup script to the read-only rootfs (temporarily remounted `rw`).
+2. **Firmware is pinned.** `stack.sh` requires an exact version match with
+   `0.376.1.20.4861173338.20261116.100` (see the `version_full` check). On any other build the stack
+   refuses to take over and restores stock Alice. No support for "any Street on any firmware" is
+   promised.
+3. **The repository alone is not installable.** `stack.sh` launches `relay`, `loopback.so`,
+   `dispatch`, `holder`, `client.armhf`, `vqe_tap_mango_dsp.so`, `native_agent.so` and a `state/`
+   directory with an existing session; `install.sh` expects an already prepared installation and
+   verifies the SHA-256 of the `MANIFEST`. Those binaries are build artifacts and are not published
+   here — see [Build](#build) and prepare them on the speaker first.
+4. **The install command in the upstream README is not for Street.** It downloads the original
+   Alisa Voice for supported models. For Street, follow this document only.
+
+## Why an SSH server is needed
+
+`chatgpt.com` may refuse requests coming directly from the speaker. The client therefore opens an
+**outbound** SSH connection to a small relay host, and HTTPS to `chatgpt.com` is tunnelled through
+it. The relay does not decrypt TLS, does not expose the speaker and accepts no inbound sessions —
+it is a one-way path "speaker → relay → site". Without a reachable relay the voice stack does not
+start; with the relay down, the speaker simply stays a stock Alice.
+
 ## Why Street needs a different tap
 
 | | Lite 2 (Plum) | Street (Mango) |
@@ -74,12 +101,22 @@ either the same LAN or a separate `ssh -R` service on the speaker.
 
 ## Build
 
+The repository ships sources and deployment scripts; the runtime binaries must be built for the
+speaker (ARMhf, EABI5, hard-float) and are deliberately not published here.
+
 ```sh
-# tap (ARMhf, must match the station's ABI)
+# 1. DSP tap
 aarch64-linux-gnu-gcc -marm -mfloat-abi=hard -shared -fPIC -O2 \
   -o vqe_tap_mango_dsp.so engines/native/station/vqe_tap_mango_dsp.c -ldl
 
-# client, following upstream toolchain instructions (see docs/)
+# 2. mixer holder (needs libasound headers for ARMhf)
+aarch64-linux-gnu-gcc -marm -mfloat-abi=hard -O2 -o holder deploy/street/holder.c -lasound
+
+# 3. dispatch (Go, linux/arm)
+GOOS=linux GOARCH=arm GOARM=7 go build -o dispatch deploy/street/dispatch.go
+
+# 4. client — upstream toolchain (see docs/), patched in this branch for SW14 mute,
+#    stock `speakers` playback and selectable reasoning effort
 ```
 
 Always verify the hash **on the speaker**: cross-builds of this client are not reproducible
@@ -87,13 +124,30 @@ byte-for-byte.
 
 ## Install
 
-1. Copy `vqe_tap_mango_dsp.so`, `client.armhf`, `launch.json`, `stack.sh`, `holder`, `dispatch`,
-   `standby-inhibit.sh` and `S99alisa-port` into a directory on the writable partition
-   (`/bkupgrade/data/...`).
-2. Generate a manifest (`sha256sum -c`) so `stack.sh` can refuse a tampered set.
-3. Install `S99alisa-port` into `/etc/init.d` while the rootfs is temporarily `rw`.
-4. Power-cycle the speaker. `verify-post-power.sh` checks the new boot ID, stock-to-port takeover,
+Prepare this directory on the writable partition (`/bkupgrade/data/street-alisa-port-v1` in the
+reference setup):
+
+| Component | Where it comes from |
+|---|---|
+| `vqe_tap_mango_dsp.so` | built from `engines/native/station/vqe_tap_mango_dsp.c` |
+| `holder` | built from `deploy/street/holder.c` |
+| `dispatch` | built from `deploy/street/dispatch.go` |
+| `client.armhf` | patched client build |
+| `native_agent.so`, `loopback.so` | upstream install output |
+| `relay` | relay client build (matches your egress server) |
+| `state/` | existing ChatGPT session, created by a normal login on the speaker |
+| `launch.json` | `deploy/street/launch.json`, with paths adjusted |
+| `stack.sh`, `standby-inhibit.sh`, `S99alisa-port`, `uninstall.sh` | `deploy/street/` |
+
+Then:
+
+1. Generate `MANIFEST` (`sha256sum` of the set) so `stack.sh` can refuse a tampered or incomplete
+   install; `install.sh` additionally verifies the manifest's own hash.
+2. Install `S99alisa-port` into `/etc/init.d` while the rootfs is temporarily `rw`.
+3. Power-cycle the speaker. `verify-post-power.sh` checks the new boot ID, stock-to-port takeover,
    tap mappings, holder state and counters.
+
+`install.sh` is an in-place updater for an already working installation, not a first-time installer.
 
 ## Verify
 
