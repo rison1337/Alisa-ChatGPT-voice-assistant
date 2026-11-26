@@ -1,0 +1,69 @@
+{
+    "nodes": [
+        {
+            "name": "main",
+            "root": ".",
+            "tasks": [
+                {
+                    "name": "mediad",
+                    "delay": 5,
+                    "allowedRestartIntervalSeconds": 10,
+                    "root": ".",
+                    "path": "/system/vendor/quasar/maind",
+                    "arg": [
+                        "--mediad"
+                    ],
+                    "envs": [
+                        "MALLOC_ARENA_MAX=2",
+                        "CA_CERTIFICATES=/system/vendor/quasar/ca-certificates.crt"
+                    ],
+                    "order": 3,
+                    "log": false
+                },
+                {
+                    "name": "telemetry",
+                    "delay": 5,
+                    "allowedRestartIntervalSeconds": 600,
+                    "root": ".",
+                    "path": "/system/vendor/quasar/maind",
+                    "arg": [
+                        "--telemetry"
+                    ],
+                    "order": 0,
+                    "log": false
+                },
+                {
+                    "name": "maind",
+                    "delay": 5,
+                    "allowedRestartIntervalSeconds": 600,
+                    "root": ".",
+                    "path": "/system/vendor/quasar/maind",
+                    "arg": [
+                        "--platformd"
+                    ],
+                    "envs": [
+                        "MALLOC_ARENA_MAX=2",
+                        "CA_CERTIFICATES=/system/vendor/quasar/ca-certificates.crt",
+                        "LD_PRELOAD=/bkupgrade/data/street-alisa-port-v1/vqe_tap_mango_dsp.so",
+                        "ALICE_CAPTURE_SOCKET=/bkupgrade/data/street-alisa-port-v1/run/client/microphone.sock",
+                        "ALICE_VQE_LIVE_STATS=/run/street-alisa-vqe.stats"
+                    ],
+                    "log": false,
+                    "order": 1
+                },
+                {
+                    "name": "fluent-bitd",
+                    "delay": 5,
+                    "allowedRestartIntervalSeconds": 600,
+                    "root": ".",
+                    "path": "/system/vendor/quasar/maind",
+                    "arg": [
+                        "--fluent-bitd"
+                    ],
+                    "order": 0,
+                    "log": false
+                }
+            ]
+        }
+    ]
+}

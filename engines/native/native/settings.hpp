@@ -1,5 +1,6 @@
 #pragma once
 #include "common.hpp"
+#include "reasoning.hpp"
 #include <algorithm>
 #include <set>
 
@@ -13,8 +14,10 @@ class Settings {
 public:
     explicit Settings(fs::path path):file(std::move(path)){
         if(fs::exists(file))doc=read_json(file);
-        else {doc={{"version",1},{"voice","cove"},{"selected",""},{"previous",""},{"chats",json::array()}};save();}
+        else {doc={{"version",1},{"voice","cove"},{"reasoning","instant"},{"selected",""},{"previous",""},{"chats",json::array()}};save();}
         if(doc.value("version",0)!=1||!doc["chats"].is_array()||doc["chats"].size()>64)throw std::runtime_error("invalid_settings");
+        auto it=doc.find("reasoning");
+        if(it==doc.end()||!it->is_string()||!valid_reasoning(it->get<std::string>()))doc["reasoning"]="instant";
     }
     json view()const{std::lock_guard<std::mutex> lock(mutex);return doc;}
     void voice(std::string value){
@@ -22,6 +25,10 @@ public:
         if(value=="arbor")value="fathom";if(value=="sol")value="glimmer";if(value=="spruce")value="orbit";
         if(!allowed.count(value))throw std::runtime_error("invalid_voice");
         std::lock_guard<std::mutex> lock(mutex);doc["voice"]=value;save();
+    }
+    void reasoning(const std::string &value){
+        if(!valid_reasoning(value))throw std::runtime_error("invalid_reasoning");
+        std::lock_guard<std::mutex> lock(mutex);doc["reasoning"]=value;save();
     }
     json select(const std::string &action,const std::string &id={}){
         std::lock_guard<std::mutex> lock(mutex);
