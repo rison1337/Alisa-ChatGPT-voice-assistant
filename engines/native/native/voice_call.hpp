@@ -27,7 +27,7 @@
 #include <sys/un.h>
 
 struct CallOptions {
-    std::string voice="cove",device="default",microphone;
+    std::string voice="cove",reasoning="instant",device="default",microphone;
     std::string conversation_id,parent_message_id,voice_session_id;
     std::string synthetic_text="Проверка экспериментального клиента. Ответь одним словом: готово.";
     std::string expected_reply="готов";
@@ -110,6 +110,11 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
     std::map<int,unsigned int> sample_sizes;
     std::map<int,unsigned int> timestamp_steps;uint32_t last_timestamp=0;
     uint32_t source_ssrc=0;bool have_timestamp=false;
+    bool signaling_accepted=false,media_started=false; // guarded by mutex
+    [[noreturn]] void startup_failure()const{
+        if(!stop_requested&&!stopping&&server_state.reasoning_rejected)throw ReasoningRejected();
+        throw std::runtime_error(server_state.error.empty()?"call_cancelled":server_state.error);
+    }
     json identity=json::object();
     json identity_shapes=json::object();
     void publish(const json &values){
@@ -294,6 +299,7 @@ public:
 #endif
     }
     void stop(){stop_requested=true;changed.notify_all();std::lock_guard<std::mutex> lock(callback_mutex);accept_updates=false;}
+    void close_rejected_start(){stop();if(pc)pc->close();}
     bool speaking()const{return is_speaking;}
     void check(){relay_text("Проверка автономного клиента на колонке. Ответь только: автономный режим готов.");}
     void interrupt(){
@@ -325,6 +331,9 @@ public:
             {"loop_overruns",loop_overruns.load()},{"max_encode_us",max_encode_us.load()},{"max_write_us",max_write_us.load()},
             {"open_cue_played",open_cue_played.load()},
             {"identity_shapes",identity_shapes},{"rss_kib",rss_kib()}};
+        result["session"]={{"voice",options.voice},{"effort_sent",options.reasoning},
+            {"signaling_accepted",signaling_accepted},{"media_started",media_started},
+            {"effort_reported",server_state.reported_effort}};
         result["server_close"]=server_state.close;result["last_server_state"]=server_state.last_state;
         result["milestones_ms"]={{"channel_open",channel_open_ms.load()},{"first_mic_frame",first_mic_ms.load()},
             {"first_uplink",first_uplink_ms.load()},{"first_nonzero_uplink",first_speech_ms.load()},
@@ -374,8 +383,7 @@ public:
         std::string sid=options.voice_session_id.empty()?random_id():options.voice_session_id;
         std::transform(sid.begin(),sid.end(),sid.begin(),[](unsigned char c){return std::toupper(c);});
         {std::lock_guard<std::mutex> lock(mutex);identity["voice_session_id"]=sid;}
-        publish({{"voice_session_id",sid}});
-        json session={{"backend_reasoning_effort","instant"},{"language_code","ru-RU"},
+        json session={{"backend_reasoning_effort",options.reasoning},{"language_code","ru-RU"},
             {"requested_default_model",""},{"voice",options.voice},{"voice_session_id",sid},
             {"voice_status_request_id",sid},{"timezone_offset_min",-300},{"timezone","Asia/Yekaterinburg"},
             {"voice_mode","wingman"},{"model_slug",""},{"model_slug_advanced",""},
@@ -385,12 +393,12 @@ public:
         if(!options.parent_message_id.empty())session["parent_message_id"]=options.parent_message_id;
         auto answer=exchange_sdp(auth,std::string(*pc->localDescription()),session,&stop_requested);
         pc->setRemoteDescription(rtc::Description(answer,"answer"));
+        {std::lock_guard<std::mutex> lock(mutex);signaling_accepted=true;}
         {
             std::unique_lock<std::mutex> lock(mutex);
             if(!changed.wait_for(lock,std::chrono::seconds(20),[&]{return channel_open||failed||stop_requested||stopping;}))throw std::runtime_error("webrtc_connect_timeout");
         }
-        if(failed||stop_requested||stopping){std::lock_guard<std::mutex> lock(mutex);
-            throw std::runtime_error(server_state.error.empty()?"call_cancelled":server_state.error);}
+        if(failed||stop_requested||stopping){std::lock_guard<std::mutex> lock(mutex);startup_failure();}
         int error=0;
         std::unique_ptr<OpusEncoder,decltype(&opus_encoder_destroy)> encoder(
             opus_encoder_create(16000,1,OPUS_APPLICATION_VOIP,&error),opus_encoder_destroy);
@@ -423,9 +431,11 @@ public:
             // opening cue must not announce an active call or start the mic.
             std::lock_guard<std::mutex> lock(mutex);
             if(!server_state.can_start_audio(failed||stop_requested||stopping))
-                throw std::runtime_error(server_state.error.empty()?"call_cancelled":server_state.error);
-            if(options.connected)options.connected();
+                startup_failure();
+            media_started=true;
         }
+        publish({{"voice_session_id",sid}});
+        if(options.connected)options.connected();
         auto start=Clock::now(),tick=start;
         bool asked=false;bool starving=false;
 #ifndef ALISA_USE_NETEQ

@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdio>
+#include <cstring>
 #include <dlfcn.h>
 #include <stdexcept>
 
@@ -23,8 +25,34 @@ public:
         auto params=symbol<int(*)(void *,int,int,unsigned int,unsigned int,int,unsigned int)>("snd_pcm_set_params");
         writei=symbol<decltype(writei)>("snd_pcm_writei");recover=symbol<decltype(recover)>("snd_pcm_recover");
         drop=symbol<decltype(drop)>("snd_pcm_drop");close_pcm=symbol<decltype(close_pcm)>("snd_pcm_close");
-        if(open_pcm(&pcm,device,0,0)<0||params(pcm,2,3,2,48000,1,80000)<0)
-            throw std::runtime_error("alsa_open_failed");
+        auto attempt=[&](const char *name,const char *route)->const char *{
+            int rc=open_pcm(&pcm,name,0,0);
+            if(rc<0){
+                std::fprintf(stderr,"ALISA_PCM/1 alsa_open_failed route=%s rc=%d\n",route,rc);
+                return "alsa_open_failed";
+            }
+            constexpr int s16_le=2,rw_interleaved=3,soft_resample=1;
+            constexpr unsigned int channels=2,rate=48000,latency=80000;
+            rc=params(pcm,s16_le,rw_interleaved,channels,rate,soft_resample,latency);
+            if(rc<0){
+                std::fprintf(stderr,"ALISA_PCM/1 alsa_set_params_failed route=%s rc=%d "
+                    "format=S16_LE access=RW_INTERLEAVED channels=%u rate_hz=%u soft_resample=%d latency_us=%u\n",
+                    route,rc,channels,rate,soft_resample,latency);
+                close_pcm(pcm);pcm=nullptr;
+                return "alsa_set_params_failed";
+            }
+            return nullptr;
+        };
+        const bool default_requested=std::strcmp(device,"default")==0;
+        // Never interpolate an arbitrary PCM name or libasound error text into our logs.
+        const char *route=default_requested?"default":std::strcmp(device,"null")==0?"null":"explicit";
+#ifdef ALISA_STREET_SW14
+        // On Street, the stock speakers alias is the plug/dmix playback path.
+        // Opening and configuring it is the availability check; no config edits or raw hw bypass.
+        if(default_requested && !attempt("speakers","speakers"))route="speakers";
+        else
+#endif
+        if(const char *error=attempt(device,route))throw std::runtime_error(error);
         unsigned long buffer=0,period=0;
         auto get=symbol<int(*)(void *,unsigned long *,unsigned long *)>("snd_pcm_get_params");
         auto alloc=symbol<int(*)(void **)>("snd_pcm_sw_params_malloc");
@@ -37,6 +65,7 @@ public:
         auto threshold=buffer>period?buffer-period:1;if(threshold>2880)threshold=2880;
         if(start(pcm,sw,threshold)<0||apply(pcm,sw)<0)throw std::runtime_error("alsa_setup_failed");
         free_sw(sw);sw=nullptr;
+        std::fprintf(stderr,"ALISA_PCM/1 alsa_playback_ready route=%s\n",route);
       }catch(...){if(sw&&free_sw)free_sw(sw);if(pcm&&close_pcm)close_pcm(pcm);pcm=nullptr;if(library)dlclose(library);library=nullptr;throw;}
     }
     void drain(){auto fn=symbol<int(*)(void *)>("snd_pcm_drain");if(fn(pcm)<0)throw std::runtime_error("alsa_drain_failed");}

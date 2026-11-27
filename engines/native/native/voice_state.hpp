@@ -1,5 +1,6 @@
 #pragma once
 #include <nlohmann/json.hpp>
+#include "reasoning.hpp"
 #include <initializer_list>
 #include <string>
 
@@ -7,7 +8,8 @@
 // detail is untrusted text and must never become a log or exception message.
 struct VoiceServerState {
     using json=nlohmann::json;
-    bool ended=false;
+    bool ended=false,reasoning_rejected=false;
+    std::string reported_effort="unknown";
     std::string error,last_state="unknown";
     json close=json::object();
 
@@ -21,6 +23,12 @@ struct VoiceServerState {
     }
     bool receive(const std::string &kind,const json &payload){
         if(ended)return true;
+        if(kind=="startup_telemetry"||kind=="session.created"||kind=="session.updated"){
+            auto nested=payload.find("session");
+            auto effort=code(nested!=payload.end()&&nested->is_object()?*nested:payload,
+                "backend_reasoning_effort",{"instant","high"});
+            if(effort!="unknown")reported_effort=effort;
+        }
         if(kind=="state_update")
             last_state=code(payload,"new_state",{"listening","thinking","speaking","idle"});
         if(kind=="goodbye"){
@@ -35,8 +43,10 @@ struct VoiceServerState {
                 else if(detail=="upstream_error")error="voice_server_upstream_error";
                 else if(detail=="server_error")error="voice_server_error";
             }
+            reasoning_rejected=reason=="error"&&reasoning_validation_error(payload);
             ended=true;
         }else if(kind=="error"||kind=="session.error"){
+            reasoning_rejected=reasoning_validation_error(payload);
             error="voice_session_ended";ended=true;
         }
         return ended;

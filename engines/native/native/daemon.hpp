@@ -4,6 +4,7 @@
 #include "children.hpp"
 #include "http_server.hpp"
 #include <cmath>
+#include <syslog.h>
 
 inline std::string safe_error(const std::exception &exc){
     std::string value=exc.what();
@@ -21,7 +22,7 @@ class VoiceDaemon {
     std::atomic<bool> ending{false};std::string phase="idle",error;
     std::string led_style=indicator_environment_style();
     std::atomic<bool> preparing_cancel{false};unsigned long generation=0;
-    json last_stats=json::object();unsigned int calls=0;
+    json last_stats=json::object();unsigned int calls=0,reasoning_fallbacks=0;
     void close_cue(){
         if(test_mode||stopping||ending)return;
         try{
@@ -64,9 +65,11 @@ class VoiceDaemon {
                 std::string account=auth.contains("account_id")&&auth["account_id"].is_string()?auth["account_id"].get<std::string>():"";
                 if(!entry.value("account_id",std::string()).empty()&&entry["account_id"]!=account)throw std::runtime_error("chat_account_mismatch");
                 CallOptions options;
-                options.voice=settings.view().value("voice",std::string("cove"));
+                auto preferences=settings.view();
+                options.voice=preferences.value("voice",std::string("cove"));
+                options.reasoning=preferences.value("reasoning",std::string("instant"));
                 options.device=test_mode?"null":"default";
-                if(!test_mode)options.microphone=(runtime_directory/"microphone.sock").string();
+                if(!test_mode&&!request.value("no_mic",false))options.microphone=(runtime_directory/"microphone.sock").string();
                 options.conversation_id=entry.value("conversation_id",std::string());
                 options.parent_message_id=entry.value("parent_message_id",std::string());
                 options.voice_session_id=entry.value("voice_session_id",std::string());
@@ -75,11 +78,24 @@ class VoiceDaemon {
                     if(call_generation==generation&&!stopping&&!ending)phase="active";};
                 std::string id=entry["id"].get<std::string>();
                 options.update=[this,id,account](const json &values){settings.update(id,values,account);};
-                active=std::make_shared<VoiceCall>(options);
-                {std::lock_guard<std::mutex> lock(mutex);
-                    if(request.value("_generation",0UL)!=generation)throw std::runtime_error("call_cancelled");
-                    call=active;phase="connecting";error.clear();++calls;}
-                json result=active->run(auth);
+                auto attempt=[&](const std::string &effort){
+                    auto chosen=options;
+                    chosen.reasoning=effort;
+                    auto next=std::make_shared<VoiceCall>(std::move(chosen));
+                    {std::lock_guard<std::mutex> lock(mutex);
+                        if(call_generation!=generation||stopping||ending)throw std::runtime_error("call_cancelled");
+                        if(effort==options.reasoning)++calls;
+                        call=next;phase="connecting";error.clear();}
+                    active=std::move(next);
+                    return active->run(auth);
+                };
+                json result=with_reasoning_fallback(options.reasoning,attempt,still_current,[&]{
+                    active->close_rejected_start();
+                    // The rejected call must release its RTC and socket before retry.
+                    {std::lock_guard<std::mutex> lock(mutex);call.reset();++reasoning_fallbacks;}
+                    active.reset();
+                    syslog(LOG_NOTICE,"ALISA_REASONING/1 rejected=high retry=instant");
+                });
                 {std::lock_guard<std::mutex> lock(mutex);last_stats=result;last_stats.erase("identity");
                     if(result.contains("error"))error=result["error"].get<std::string>();}
             }catch(const std::exception &exc){
@@ -140,7 +156,7 @@ public:
     }
     json status(){
         json info;std::shared_ptr<VoiceCall> active;
-        {std::lock_guard<std::mutex> lock(mutex);info={{"phase",phase},{"error",error},{"calls",calls},{"last_call",last_stats},{"led_style",led_style}};active=call;}
+        {std::lock_guard<std::mutex> lock(mutex);info={{"phase",phase},{"error",error},{"calls",calls},{"reasoning_fallbacks",reasoning_fallbacks},{"last_call",last_stats},{"led_style",led_style}};active=call;}
         if(active)info["audio"]=active->stats();
         info["rss_kib"]=rss_kib();info["pid"]=getpid();info["test_mode"]=test_mode;
         info["agent_connected"]=test_mode||(agent&&agent->connected());
@@ -161,6 +177,7 @@ public:
             {std::lock_guard<std::mutex> lock(mutex);if(phase!="active"||!call)throw std::runtime_error("voice_not_connected");active=call;}
             active->check();return {{"ok",true},{"synthetic_input",true}};
         }
+        if(action=="reasoning"){settings.reasoning(request.value("reasoning",std::string()));return {{"ok",true}};}
         if(action=="voice"){settings.voice(request.value("voice",std::string()));return {{"ok",true}};}
         if(action=="led"){
             auto style=request.value("style",std::string());

@@ -1,5 +1,6 @@
 #pragma once
 #include "common.hpp"
+#include "reasoning.hpp"
 #include "ca_store.hpp"
 #include <curl/curl.h>
 #include <cctype>
@@ -31,6 +32,11 @@ inline std::string rejection_kind(const HttpReply &reply){
     const auto start=http_token(std::string_view(reply.body).substr(0,256));
     if(reply.html||start.rfind("<html",0)==0||start.rfind("<!doctype html",0)==0)return "html";
     return "upstream";
+}
+inline bool reasoning_http_rejected(const HttpReply &reply){
+    if((reply.status!=400&&reply.status!=422)||rejection_kind(reply)!="upstream")return false;
+    auto body=json::parse(reply.body,nullptr,false);
+    return body.is_discarded()?reasoning_validation_error(json(reply.body)):reasoning_validation_error(body);
 }
 inline bool web_auth_current(const json &auth){
     try{
@@ -159,6 +165,7 @@ inline std::string exchange_sdp(const json &auth,const std::string &offer,const 
         for(int i=0;i<10&&!stopping&&!(cancel&&*cancel);++i)std::this_thread::sleep_for(std::chrono::milliseconds(100));
         reply=web_request("https://chatgpt.com/realtime/wm?dcid=0",auth,body,"multipart/form-data; boundary="+boundary,cancel);
     }
+    if(reasoning_http_rejected(reply))throw ReasoningRejected();
     if((reply.status!=200&&reply.status!=201)||reply.body.rfind("v=0",0)!=0)
         throw std::runtime_error("voice_signaling_"+rejection_kind(reply)+"_"+std::to_string(reply.status));
     return reply.body;

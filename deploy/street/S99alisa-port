@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keep rcS moving: fail-open work and stock restoration are detached.
+B=/bkupgrade/data/street-alisa-port-v1
+case ${1:-start} in
+    start) [ -e "$B/DISABLED" ] || "$B/stack.sh" start ;;
+    stop) "$B/stack.sh" stop >/dev/null 2>&1 ;;
+esac
+exit 0

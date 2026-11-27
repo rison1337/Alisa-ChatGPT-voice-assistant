@@ -59,11 +59,12 @@ int main(int argc,char **argv){
         if(action=="status"){
             std::cout<<control_request(state,json::object()).dump(2)<<"\n";return 0;
         }
-        if(action=="open"||action=="new"||action=="close"||action=="previous"||action=="select"||action=="voice"||action=="check"||action=="led"){
+        if(action=="open"||action=="new"||action=="close"||action=="previous"||action=="select"||action=="voice"||action=="reasoning"||action=="check"||action=="led"){
             json request={{"action",action}};
-            if(action=="voice"||action=="select"||action=="led"){
+            if(action=="new"&&argc==4&&std::string_view(argv[3])=="--no-mic")request["no_mic"]=true;
+            if(action=="voice"||action=="reasoning"||action=="select"||action=="led"){
                 if(argc<4)throw std::runtime_error("missing_argument");
-                request[action=="voice"?"voice":action=="led"?"style":"chat_id"]=argv[3];
+                request[action=="led"?"style":action=="select"?"chat_id":action]=argv[3];
             }
             std::cout<<control_request(state,request).dump()<<"\n";return 0;
         }
